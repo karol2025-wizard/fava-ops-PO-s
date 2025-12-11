@@ -1,0 +1,74 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Streamlit - SECRETS AND CONFIGURATION (CRITICAL: Never commit!)
+.streamlit/secrets.toml
+**/.streamlit/secrets.toml
+**/secrets.toml
+
+# Credentials and API Keys - CRITICAL: Never commit!
+credentials/
+*.json
+!package.json
+!package-lock.json
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# API Keys and Secrets (additional patterns)
+*api*key*
+*secret*
+*password*
+*token*
+*credential*
+
+# Archive and backup files
+/archive/
+*.zip
+*.bak
+*.backup
+backup-*
+
+# Test files that might contain sensitive data
+test_gfs_config.py
+
+# Specific pages (if needed)
+pages/analysis_damas_import_sales.py
+pages/analysis_damas_sales_daily.py
+pages/analysis_folfol_sales_daily.py
+pages/analysis_folfol_sales_weekly.py
+pages/ai*
+
+# Other
+test.txt
+.DS_Store
+Thumbs.db
+
+# Exclude everything outside project directory
+AppData/
+Desktop/
+Documents/
+Downloads/
+# Only include files in current directory and subdirectories
+# This prevents Git from tracking files outside the project

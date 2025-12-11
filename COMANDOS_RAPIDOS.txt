@@ -1,0 +1,24 @@
+═══════════════════════════════════════════════════════════════
+COMANDOS RÁPIDOS - Copia y pega en Git Bash o CMD
+═══════════════════════════════════════════════════════════════
+
+cd "C:\Users\Operations - Fava\Desktop\code\fava ops PO's"
+
+git init
+
+git add .
+
+git status
+(VERIFICA que NO aparezcan secrets.toml ni credentials/)
+
+git commit -m "Initial commit: Fava Operations PO's system"
+
+git remote add origin https://github.com/karol2025-wizard/fava-ops-PO-s.git
+
+git branch -M main
+
+git push -u origin main
+
+═══════════════════════════════════════════════════════════════
+
+

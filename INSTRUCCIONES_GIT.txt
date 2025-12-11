@@ -1,0 +1,113 @@
+═══════════════════════════════════════════════════════════════
+INSTRUCCIONES PARA VINCULAR EL PROYECTO CON GITHUB
+═══════════════════════════════════════════════════════════════
+
+IMPORTANTE: Ejecuta estos comandos en GIT BASH o CMD (no PowerShell)
+
+═══════════════════════════════════════════════════════════════
+PASO 1: Abre Git Bash o CMD
+═══════════════════════════════════════════════════════════════
+
+Si usas Git Bash:
+  - Abre Git Bash desde el menú de inicio
+  - Navega al proyecto con:
+    cd "/c/Users/Operations - Fava/Desktop/code/fava ops PO's"
+
+Si usas CMD (Command Prompt):
+  - Abre CMD desde el menú de inicio
+  - Navega al proyecto con:
+    cd "C:\Users\Operations - Fava\Desktop\code\fava ops PO's"
+
+═══════════════════════════════════════════════════════════════
+PASO 2: Ejecuta estos comandos UNO POR UNO
+═══════════════════════════════════════════════════════════════
+
+1. Inicializar Git:
+   git init
+
+2. Verificar que .gitignore existe:
+   dir .gitignore
+   (o en Git Bash: ls -la .gitignore)
+
+3. Agregar todos los archivos (los sensibles serán ignorados):
+   git add .
+
+4. ⚠️ VERIFICACIÓN CRÍTICA - Ver qué archivos se van a commitear:
+   git status
+   
+   DEBE MOSTRAR:
+   ✅ README.md
+   ✅ .gitignore
+   ✅ Archivos .py
+   ✅ requirements.txt
+   
+   NO DEBE MOSTRAR:
+   ❌ secrets.toml
+   ❌ credentials/ o archivos .json de credenciales
+   
+   Si ves archivos sensibles, DETÉN y revisa .gitignore
+
+5. Si todo está bien, hacer commit:
+   git commit -m "Initial commit: Fava Operations PO's system"
+
+6. Agregar el remote de GitHub:
+   git remote add origin https://github.com/karol2025-wizard/fava-ops-PO-s.git
+
+7. Verificar el remote:
+   git remote -v
+   
+   Debe mostrar:
+   origin  https://github.com/karol2025-wizard/fava-ops-PO-s.git (fetch)
+   origin  https://github.com/karol2025-wizard/fava-ops-PO-s.git (push)
+
+8. Cambiar a branch main:
+   git branch -M main
+
+9. Hacer push al repositorio:
+   git push -u origin main
+
+═══════════════════════════════════════════════════════════════
+SI NECESITAS AUTENTICACIÓN
+═══════════════════════════════════════════════════════════════
+
+Si Git pide usuario y contraseña:
+1. Usuario: tu nombre de usuario de GitHub (karol2025-wizard)
+2. Contraseña: Usa un Personal Access Token (NO tu contraseña normal)
+
+Para crear un Personal Access Token:
+1. Ve a GitHub.com → Settings → Developer settings → Personal access tokens → Tokens (classic)
+2. Generate new token (classic)
+3. Dale permisos: repo (todos los permisos de repositorio)
+4. Copia el token y úsalo como contraseña
+
+═══════════════════════════════════════════════════════════════
+VERIFICACIÓN FINAL
+═══════════════════════════════════════════════════════════════
+
+Después del push, verifica en:
+https://github.com/karol2025-wizard/fava-ops-PO-s
+
+Debes ver:
+✅ README.md
+✅ .gitignore
+✅ Archivos del proyecto
+❌ NO debe aparecer secrets.toml
+❌ NO debe aparecer credentials/
+
+═══════════════════════════════════════════════════════════════
+SI HAY PROBLEMAS
+═══════════════════════════════════════════════════════════════
+
+Error: "remote origin already exists"
+  Solución: git remote remove origin
+           Luego vuelve al paso 6
+
+Error: "Authentication failed"
+  Solución: Usa un Personal Access Token en lugar de contraseña
+
+Error: "Permission denied"
+  Solución: Verifica que tengas acceso al repositorio en GitHub
+
+═══════════════════════════════════════════════════════════════
+
+
