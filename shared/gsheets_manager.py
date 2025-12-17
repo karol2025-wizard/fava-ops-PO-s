@@ -1,6 +1,7 @@
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
+import re
 
 
 class GSheetsManager:
@@ -28,76 +29,145 @@ class GSheetsManager:
             return self.client
         except PermissionError as e:
             raise PermissionError(
-                f"No se pueden leer las credenciales de Google: {str(e)}\n"
-                f"Ruta del archivo: {self.credentials_path}\n"
-                f"Verifica que el archivo exista y tengas permisos de lectura."
+                f"Cannot read Google credentials: {str(e)}\n"
+                f"File path: {self.credentials_path}\n"
+                f"Verify that the file exists and you have read permissions."
             )
         except FileNotFoundError as e:
             raise FileNotFoundError(
-                f"Archivo de credenciales no encontrado: {self.credentials_path}\n"
-                f"Verifica que la ruta sea correcta en la configuración."
+                f"Credentials file not found: {self.credentials_path}\n"
+                f"Verify that the path is correct in the configuration."
             )
         except Exception as e:
             raise Exception(f"Failed to authenticate with Google Sheets: {e}")
+
+    def normalize_sheet_url(self, sheet_url):
+        """
+        Normalize Google Sheets URL by extracting the sheet ID and creating a clean URL.
+        Handles various URL formats:
+        - https://docs.google.com/spreadsheets/d/SHEET_ID/edit
+        - https://docs.google.com/spreadsheets/d/SHEET_ID/edit?gid=0#gid=0
+        - https://docs.google.com/spreadsheets/d/SHEET_ID
+        """
+        if not sheet_url:
+            raise ValueError("Sheet URL is empty")
+        
+        # Pattern to extract sheet ID from various URL formats
+        # Matches: /spreadsheets/d/SHEET_ID/ or /spreadsheets/d/SHEET_ID
+        match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', sheet_url)
+        if match:
+            sheet_id = match.group(1)
+            # Return a clean URL format that gspread can use
+            return f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+        else:
+            # If we can't extract the ID, return the original URL
+            # gspread might still be able to handle it
+            return sheet_url
 
     def open_sheet_by_url(self, sheet_url, worksheet_name):
         """Open a specific worksheet in a Google Sheet by URL"""
         if not self.client:
             raise ValueError("Not authenticated. Call authenticate() first.")
 
+        # Normalize the URL to ensure it's in the correct format
+        normalized_url = self.normalize_sheet_url(sheet_url)
+        service_account_email = "starship-erp@starship-431114.iam.gserviceaccount.com"
+
         try:
-            spreadsheet = self.client.open_by_url(sheet_url)
+            spreadsheet = self.client.open_by_url(normalized_url)
             worksheet = spreadsheet.worksheet(worksheet_name)
             return worksheet
+        except PermissionError as e:
+            # Capture PermissionError specifically before other exceptions
+            raise Exception(
+                f"❌ Permission error accessing the Google Sheet.\n\n"
+                f"**Error details:** {str(e)}\n\n"
+                f"**URL:** {sheet_url}\n"
+                f"**Worksheet:** {worksheet_name}\n\n"
+                f"**⚠️ PROBLEM:** The Google Sheet is not shared with the service account.\n\n"
+                f"**Step-by-step solution:**\n"
+                f"1. Open the Google Sheet in your browser: {sheet_url}\n"
+                f"2. Click the **'Share'** button (top right)\n"
+                f"3. Add this email: `{service_account_email}`\n"
+                f"4. Give it **'Editor'** or **'Viewer'** permissions\n"
+                f"5. Click **'Send'** or **'Done'**\n"
+                f"6. Wait a few seconds and try again in the application\n\n"
+                f"**Note:** You don't need to notify the service account, it will be added automatically."
+            )
         except gspread.exceptions.SpreadsheetNotFound:
             raise Exception(
-                f"❌ No se pudo encontrar el Google Sheet.\n\n"
-                f"**URL:** {sheet_url}\n\n"
-                f"**Posibles causas:**\n"
-                f"1. El Google Sheet no está compartido con la cuenta de servicio\n"
-                f"2. La URL del sheet es incorrecta\n"
-                f"3. No tienes permisos para acceder al sheet\n\n"
-                f"**Solución:**\n"
-                f"- Comparte el Google Sheet con la cuenta de servicio\n"
-                f"- Verifica que la URL sea correcta"
+                f"❌ Could not find the Google Sheet.\n\n"
+                f"**URL:** {sheet_url}\n"
+                f"**Worksheet:** {worksheet_name}\n\n"
+                f"**Possible causes:**\n"
+                f"1. The Google Sheet is not shared with the service account\n"
+                f"2. The sheet URL is incorrect\n"
+                f"3. You don't have permission to access the sheet\n\n"
+                f"**Step-by-step solution:**\n"
+                f"1. Open the Google Sheet in your browser: {sheet_url}\n"
+                f"2. Click the **'Share'** button (top right)\n"
+                f"3. Add this email: `{service_account_email}`\n"
+                f"4. Give it **'Editor'** or **'Viewer'** permissions\n"
+                f"5. Click **'Send'** or **'Done'**\n"
+                f"6. Try again in the application\n\n"
+                f"**Note:** You don't need to notify the service account, it will be added automatically."
             )
         except gspread.exceptions.WorksheetNotFound:
             raise Exception(
-                f"❌ No se encontró la hoja '{worksheet_name}' en el Google Sheet.\n\n"
-                f"**Solución:**\n"
-                f"- Verifica que el nombre de la hoja sea exactamente: `{worksheet_name}`\n"
-                f"- O actualiza la configuración con el nombre correcto de la hoja"
+                f"❌ Worksheet '{worksheet_name}' not found in the Google Sheet.\n\n"
+                f"**Solution:**\n"
+                f"- Verify that the worksheet name is exactly: `{worksheet_name}`\n"
+                f"- Or update the configuration with the correct worksheet name"
             )
         except gspread.exceptions.APIError as e:
-            error_code = getattr(e, 'response', {}).get('status', 'Unknown')
+            # Intentar obtener el código de error de diferentes formas
+            error_code = 'Unknown'
             error_message = str(e)
             
-            if error_code == 403:
+            # Intentar obtener el código de error del response
+            if hasattr(e, 'response'):
+                if isinstance(e.response, dict):
+                    error_code = e.response.get('status', 'Unknown')
+                elif hasattr(e.response, 'status_code'):
+                    error_code = e.response.status_code
+            
+            # También verificar el mensaje de error para códigos HTTP
+            import re
+            status_match = re.search(r'(\d{3})', error_message)
+            if status_match and error_code == 'Unknown':
+                error_code = status_match.group(1)
+            
+            if error_code == 403 or '403' in error_message:
                 raise Exception(
-                    f"❌ Error de permisos (403): No tienes acceso al Google Sheet.\n\n"
-                    f"**URL:** {sheet_url}\n\n"
-                    f"**Solución:**\n"
-                    f"- Comparte el Google Sheet con la cuenta de servicio\n"
-                    f"- Asegúrate de dar permisos de 'Editor' o 'Lector'\n"
-                    f"- Verifica que el email de la cuenta de servicio tenga acceso"
+                    f"❌ Permission error (403): You don't have access to the Google Sheet.\n\n"
+                    f"**URL:** {sheet_url}\n"
+                    f"**Worksheet:** {worksheet_name}\n\n"
+                    f"**⚠️ REQUIRED SOLUTION:**\n\n"
+                    f"**Step 1:** Open the Google Sheet in your browser\n"
+                    f"**Step 2:** Click the **'Share'** button (top right)\n"
+                    f"**Step 3:** Add this email: `{service_account_email}`\n"
+                    f"**Step 4:** Give it **'Editor'** or **'Viewer'** permissions\n"
+                    f"**Step 5:** Click **'Send'** or **'Done'**\n"
+                    f"**Step 6:** Wait a few seconds and try again\n\n"
+                    f"**Note:** You don't need to notify the service account, it will be added automatically."
                 )
             elif error_code == 404:
                 raise Exception(
-                    f"❌ Google Sheet no encontrado (404).\n\n"
+                    f"❌ Google Sheet not found (404).\n\n"
                     f"**URL:** {sheet_url}\n\n"
-                    f"**Solución:**\n"
-                    f"- Verifica que la URL del sheet sea correcta\n"
-                    f"- Asegúrate de que el sheet exista y esté accesible"
+                    f"**Solution:**\n"
+                    f"- Verify that the sheet URL is correct\n"
+                    f"- Make sure the sheet exists and is accessible"
                 )
             else:
                 raise Exception(
-                    f"❌ Error de API de Google Sheets (Código: {error_code})\n\n"
-                    f"**Detalles:** {error_message}\n\n"
+                    f"❌ Google Sheets API error (Code: {error_code})\n\n"
+                    f"**Details:** {error_message}\n\n"
                     f"**URL:** {sheet_url}\n\n"
-                    f"**Solución:**\n"
-                    f"- Verifica tu conexión a internet\n"
-                    f"- Intenta nuevamente en unos momentos\n"
-                    f"- Verifica que el sheet esté compartido correctamente"
+                    f"**Solution:**\n"
+                    f"- Check your internet connection\n"
+                    f"- Try again in a few moments\n"
+                    f"- Verify that the sheet is shared correctly"
                 )
         except Exception as e:
             # Capturar cualquier otro error y proporcionar contexto útil
@@ -108,39 +178,64 @@ class GSheetsManager:
             if "❌" in error_message:
                 raise e
             
-            # Verificar si el error sugiere problemas de permisos o acceso
+            # Check if it's a gspread error that wasn't caught before
+            if 'gspread' in error_type.lower() or 'gspread' in error_message.lower():
+                # Try to extract information from the gspread error
+                error_lower = error_message.lower()
+                if '403' in error_message or 'forbidden' in error_lower or 'permission' in error_lower:
+                    raise Exception(
+                        f"❌ Permission error accessing the Google Sheet.\n\n"
+                        f"**Error type:** {error_type}\n"
+                        f"**Details:** {error_message}\n\n"
+                        f"**URL:** {sheet_url}\n"
+                        f"**Worksheet:** {worksheet_name}\n\n"
+                        f"**⚠️ PROBLEM:** The Google Sheet is not shared with the service account.\n\n"
+                        f"**Step-by-step solution:**\n"
+                        f"1. Open the Google Sheet in your browser: {sheet_url}\n"
+                        f"2. Click the **'Share'** button (top right)\n"
+                        f"3. Add this email: `{service_account_email}`\n"
+                        f"4. Give it **'Editor'** or **'Viewer'** permissions\n"
+                        f"5. Click **'Send'** or **'Done'**\n"
+                        f"6. Wait a few seconds and try again in the application\n\n"
+                        f"**Note:** You don't need to notify the service account, it will be added automatically."
+                    )
+            
+            # Check if the error suggests permission or access issues
             error_lower = error_message.lower()
             if any(keyword in error_lower for keyword in ['permission', 'access', 'forbidden', 'unauthorized', '403', '404']):
                 raise Exception(
-                    f"❌ Error de acceso al Google Sheet.\n\n"
-                    f"**Detalles:** {error_message}\n\n"
+                    f"❌ Access error to the Google Sheet.\n\n"
+                    f"**Error type:** {error_type}\n"
+                    f"**Details:** {error_message}\n\n"
                     f"**URL:** {sheet_url}\n"
-                    f"**Hoja:** {worksheet_name}\n\n"
-                    f"**⚠️ PROBLEMA MÁS COMÚN:** El Google Sheet no está compartido con la cuenta de servicio.\n\n"
-                    f"**Solución paso a paso:**\n"
-                    f"1. Abre el Google Sheet en tu navegador\n"
-                    f"2. Haz clic en el botón **'Compartir'** (arriba a la derecha)\n"
-                    f"3. Agrega este email: `starship-erp@starship-431114.iam.gserviceaccount.com`\n"
-                    f"4. Dale permisos de **'Editor'** o **'Lector'**\n"
-                    f"5. Haz clic en **'Enviar'** o **'Listo'**\n"
-                    f"6. Intenta nuevamente en la aplicación\n\n"
-                    f"**Nota:** No necesitas notificar a la cuenta de servicio, se agregará automáticamente."
+                    f"**Worksheet:** {worksheet_name}\n\n"
+                    f"**⚠️ MOST COMMON PROBLEM:** The Google Sheet is not shared with the service account.\n\n"
+                    f"**Step-by-step solution:**\n"
+                    f"1. Open the Google Sheet in your browser: {sheet_url}\n"
+                    f"2. Click the **'Share'** button (top right)\n"
+                    f"3. Add this email: `{service_account_email}`\n"
+                    f"4. Give it **'Editor'** or **'Viewer'** permissions\n"
+                    f"5. Click **'Send'** or **'Done'**\n"
+                    f"6. Wait a few seconds and try again in the application\n\n"
+                    f"**Note:** You don't need to notify the service account, it will be added automatically."
                 )
             
             raise Exception(
-                f"❌ Error al abrir el Google Sheet: {error_type}\n\n"
-                f"**Detalles:** {error_message}\n\n"
+                f"❌ Error opening the Google Sheet: {error_type}\n\n"
+                f"**Details:** {error_message}\n\n"
                 f"**URL:** {sheet_url}\n"
-                f"**Hoja:** {worksheet_name}\n\n"
-                f"**Posibles causas:**\n"
-                f"- El Google Sheet no está compartido con la cuenta de servicio\n"
-                f"- Problema de conexión con Google Sheets\n"
-                f"- Error en la configuración\n\n"
-                f"**Solución:**\n"
-                f"1. **Comparte el Google Sheet** con: `starship-erp@starship-431114.iam.gserviceaccount.com`\n"
-                f"2. Verifica que la URL del sheet sea correcta\n"
-                f"3. Revisa la configuración en `.streamlit/secrets.toml`\n"
-                f"4. Verifica tu conexión a internet"
+                f"**Worksheet:** {worksheet_name}\n\n"
+                f"**Possible causes:**\n"
+                f"- The Google Sheet is not shared with the service account\n"
+                f"- Connection problem with Google Sheets\n"
+                f"- Configuration error\n\n"
+                f"**Solution:**\n"
+                f"1. **Share the Google Sheet** with: `{service_account_email}`\n"
+                f"   - Open the sheet → Click 'Share' → Add the email → Permissions 'Editor' or 'Viewer'\n"
+                f"2. Verify that the sheet URL is correct\n"
+                f"3. Check the configuration in `.streamlit/secrets.toml`\n"
+                f"4. Check your internet connection\n\n"
+                f"**For more help, run:** `python test_gsheet_access.py`"
             )
 
     def get_all_records(self, worksheet):

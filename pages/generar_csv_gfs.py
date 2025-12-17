@@ -26,7 +26,7 @@ TEMPLATE_CSV_PATH = secrets.get('GFS_TEMPLATE_CSV_PATH', 'csv_template_french-v3
 # add a dictionary here. If empty, automatic mapping is used.
 # Format: {'Template Column': 'PO Field'}
 COLUMN_MAPPING = {
-    # Ejemplos (descomentar y ajustar según necesidad):
+    # Examples (uncomment and adjust as needed):
     # 'Item Number': 'SKU',
     # 'Description': 'Product Name',
     # 'Ordered Qty': 'Quantity',
@@ -35,7 +35,7 @@ COLUMN_MAPPING = {
 }
 
 # ============================================================================
-# FUNCIONES AUXILIARES
+# HELPER FUNCTIONS
 # ============================================================================
 
 def get_gsheets_manager():
@@ -45,18 +45,18 @@ def get_gsheets_manager():
         if not creds_path:
             raise ValueError("GOOGLE_CREDENTIALS_PATH not configured in secrets")
         
-        # Verificar que el archivo de credenciales exista y sea accesible
+        # Verify that the credentials file exists and is accessible
         if not os.path.isabs(creds_path):
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             creds_path = os.path.join(project_root, creds_path)
         
         if not os.path.exists(creds_path):
-            raise FileNotFoundError(f"Archivo de credenciales no encontrado: {creds_path}")
+            raise FileNotFoundError(f"Credentials file not found: {creds_path}")
         
         if not os.access(creds_path, os.R_OK):
             raise PermissionError(
-                f"No tienes permisos para leer el archivo de credenciales: {creds_path}\n"
-                f"Verifica los permisos del archivo o ejecuta la aplicación con los permisos adecuados."
+                f"You don't have permission to read the credentials file: {creds_path}\n"
+                f"Check file permissions or run the application with appropriate permissions."
             )
         
         try:
@@ -65,11 +65,11 @@ def get_gsheets_manager():
             st.session_state.gsheets_manager = gsheets_manager
         except PermissionError as e:
             raise PermissionError(
-                f"Error de permisos al acceder a las credenciales: {str(e)}\n"
-                f"Verifica que el archivo {creds_path} sea accesible."
+                f"Permission error accessing credentials: {str(e)}\n"
+                f"Verify that the file {creds_path} is accessible."
             )
         except Exception as e:
-            raise Exception(f"Error al autenticar con Google Sheets: {str(e)}")
+            raise Exception(f"Error authenticating with Google Sheets: {str(e)}")
     
     return st.session_state.gsheets_manager
 
@@ -118,23 +118,23 @@ def get_po_data(po_number):
     
     except gspread.exceptions.SpreadsheetNotFound:
         error_msg = (
-            f"❌ No se pudo encontrar el Google Sheet.\n\n"
-            f"**Posibles causas:**\n"
-            f"1. El Google Sheet no está compartido con la cuenta de servicio\n"
-            f"2. La URL del sheet es incorrecta\n"
-            f"3. No tienes permisos para acceder al sheet\n\n"
-            f"**Solución:**\n"
-            f"- Comparte el Google Sheet con: `starship-erp@starship-431114.iam.gserviceaccount.com`\n"
-            f"- Verifica que la URL sea correcta: {PO_SHEET_URL}"
+            f"❌ Could not find the Google Sheet.\n\n"
+            f"**Possible causes:**\n"
+            f"1. The Google Sheet is not shared with the service account\n"
+            f"2. The sheet URL is incorrect\n"
+            f"3. You don't have permission to access the sheet\n\n"
+            f"**Solution:**\n"
+            f"- Share the Google Sheet with: `starship-erp@starship-431114.iam.gserviceaccount.com`\n"
+            f"- Verify that the URL is correct: {PO_SHEET_URL}"
         )
         return None, error_msg
     
     except gspread.exceptions.WorksheetNotFound:
         error_msg = (
-            f"❌ No se encontró la hoja '{PO_WORKSHEET_NAME}' en el Google Sheet.\n\n"
-            f"**Solución:**\n"
-            f"- Verifica que el nombre de la hoja sea exactamente: `{PO_WORKSHEET_NAME}`\n"
-            f"- O actualiza `PO_WORKSHEET_NAME` en `.streamlit/secrets.toml` con el nombre correcto"
+            f"❌ Worksheet '{PO_WORKSHEET_NAME}' not found in the Google Sheet.\n\n"
+            f"**Solution:**\n"
+            f"- Verify that the worksheet name is exactly: `{PO_WORKSHEET_NAME}`\n"
+            f"- Or update `PO_WORKSHEET_NAME` in `.streamlit/secrets.toml` with the correct name"
         )
         return None, error_msg
     
@@ -142,79 +142,79 @@ def get_po_data(po_number):
         error_code = getattr(e, 'response', {}).get('status', 'Unknown')
         if error_code == 403:
             error_msg = (
-                f"❌ Error de permisos (403): No tienes acceso al Google Sheet.\n\n"
-                f"**Solución:**\n"
-                f"- Comparte el Google Sheet con: `starship-erp@starship-431114.iam.gserviceaccount.com`\n"
-                f"- Asegúrate de dar permisos de 'Editor' o 'Lector'"
+                f"❌ Permission error (403): You don't have access to the Google Sheet.\n\n"
+                f"**Solution:**\n"
+                f"- Share the Google Sheet with: `starship-erp@starship-431114.iam.gserviceaccount.com`\n"
+                f"- Make sure to give 'Editor' or 'Viewer' permissions"
             )
         else:
             error_msg = (
-                f"❌ Error de API de Google Sheets (Código: {error_code})\n\n"
-                f"**Detalles:** {str(e)}\n\n"
-                f"**Solución:**\n"
-                f"- Verifica tu conexión a internet\n"
-                f"- Intenta nuevamente en unos momentos"
+                f"❌ Google Sheets API error (Code: {error_code})\n\n"
+                f"**Details:** {str(e)}\n\n"
+                f"**Solution:**\n"
+                f"- Check your internet connection\n"
+                f"- Try again in a few moments"
             )
         return None, error_msg
     
     except PermissionError as e:
         error_msg = (
-            f"❌ Error de permisos al acceder a los archivos o recursos.\n\n"
-            f"**Detalles:** {str(e)}\n\n"
-            f"**Posibles causas:**\n"
-            f"1. No tienes permisos para leer el archivo de credenciales\n"
-            f"2. El archivo de credenciales está bloqueado por otro proceso\n"
-            f"3. Problemas de permisos del sistema de archivos\n\n"
-            f"**Solución:**\n"
-            f"- Verifica que el archivo `credentials/starship-431114-129e01fe3c06.json` sea accesible\n"
-            f"- Asegúrate de tener permisos de lectura en la carpeta `credentials/`\n"
-            f"- Si estás en Windows, verifica que el archivo no esté abierto en otro programa\n"
-            f"- Intenta ejecutar la aplicación con permisos de administrador si es necesario"
+            f"❌ Permission error accessing files or resources.\n\n"
+            f"**Details:** {str(e)}\n\n"
+            f"**Possible causes:**\n"
+            f"1. You don't have permission to read the credentials file\n"
+            f"2. The credentials file is locked by another process\n"
+            f"3. File system permission issues\n\n"
+            f"**Solution:**\n"
+            f"- Verify that the file `credentials/starship-431114-129e01fe3c06.json` is accessible\n"
+            f"- Make sure you have read permissions in the `credentials/` folder\n"
+            f"- If you're on Windows, verify that the file is not open in another program\n"
+            f"- Try running the application with administrator permissions if necessary"
         )
         return None, error_msg
     
     except FileNotFoundError as e:
         error_msg = (
-            f"❌ Archivo no encontrado.\n\n"
-            f"**Detalles:** {str(e)}\n\n"
-            f"**Solución:**\n"
-            f"- Verifica que el archivo de credenciales exista en la ruta configurada\n"
-            f"- Revisa la configuración de `GOOGLE_CREDENTIALS_PATH` en `.streamlit/secrets.toml`"
+            f"❌ File not found.\n\n"
+            f"**Details:** {str(e)}\n\n"
+            f"**Solution:**\n"
+            f"- Verify that the credentials file exists in the configured path\n"
+            f"- Check the `GOOGLE_CREDENTIALS_PATH` configuration in `.streamlit/secrets.toml`"
         )
         return None, error_msg
     
     except ValueError as e:
         if "Not authenticated" in str(e):
             error_msg = (
-                f"❌ Error de autenticación con Google Sheets.\n\n"
-                f"**Solución:**\n"
-                f"- Verifica que `GOOGLE_CREDENTIALS_PATH` esté configurado correctamente\n"
-                f"- Verifica que el archivo de credenciales exista y sea válido"
+                f"❌ Authentication error with Google Sheets.\n\n"
+                f"**Solution:**\n"
+                f"- Verify that `GOOGLE_CREDENTIALS_PATH` is configured correctly\n"
+                f"- Verify that the credentials file exists and is valid"
             )
         else:
-            error_msg = f"❌ Error de configuración: {str(e)}"
+            error_msg = f"❌ Configuration error: {str(e)}"
         return None, error_msg
     
     except Exception as e:
         error_type = type(e).__name__
         error_message = str(e)
         
-        # Si el error ya viene con un mensaje detallado (contiene ❌), usarlo directamente
+        # If the error already has a detailed message (contains ❌), use it directly
         if "❌" in error_message:
             return None, error_message
         
-        # Si es un error genérico, proporcionar contexto adicional
+        # If it's a generic error, provide additional context
         error_msg = (
-            f"❌ Error inesperado al buscar el PO: {error_type}\n\n"
-            f"**Detalles:** {error_message}\n\n"
-            f"**Posibles causas:**\n"
-            f"- Problema de conexión con Google Sheets\n"
-            f"- El sheet no está compartido correctamente\n"
-            f"- Error en la configuración\n\n"
-            f"**Solución:**\n"
-            f"- Verifica que el Google Sheet esté compartido con la cuenta de servicio\n"
-            f"- Revisa la configuración en `.streamlit/secrets.toml`\n"
-            f"- Verifica tu conexión a internet"
+            f"❌ Unexpected error searching for PO: {error_type}\n\n"
+            f"**Details:** {error_message}\n\n"
+            f"**Possible causes:**\n"
+            f"- Connection problem with Google Sheets\n"
+            f"- The sheet is not shared correctly\n"
+            f"- Configuration error\n\n"
+            f"**Solution:**\n"
+            f"- Verify that the Google Sheet is shared with the service account\n"
+            f"- Check the configuration in `.streamlit/secrets.toml`\n"
+            f"- Check your internet connection"
         )
         return None, error_msg
 
@@ -467,49 +467,49 @@ with config_status_col1:
         config_warnings.append("GFS_TEMPLATE_CSV_PATH (using default: 'csv_template_french-v3.csv')")
     
     if config_issues:
-        st.error("⚠️ **Configuración Requerida**")
-        st.markdown("**Los siguientes valores deben configurarse en `.streamlit/secrets.toml`:**")
+        st.error("⚠️ **Required Configuration**")
+        st.markdown("**The following values must be configured in `.streamlit/secrets.toml`:**")
         for issue in config_issues:
             st.markdown(f"- `{issue}`")
         st.markdown("---")
     
     if config_warnings:
-        with st.expander("ℹ️ Configuraciones Opcionales", expanded=False):
-            st.markdown("**Las siguientes configuraciones son opcionales (tienen valores por defecto):**")
+        with st.expander("ℹ️ Optional Configurations", expanded=False):
+            st.markdown("**The following configurations are optional (have default values):**")
             for warning in config_warnings:
                 st.markdown(f"- `{warning}`")
 
 with config_status_col2:
     if not config_issues:
-        st.success("✅ Configuración OK")
+        st.success("✅ Configuration OK")
     else:
-        st.warning("⚠️ Configuración Incompleta")
+        st.warning("⚠️ Incomplete Configuration")
 
 # Configuration Help Section
-if config_issues or st.button("📋 Ver Guía de Configuración", key="show_config_help"):
-    with st.expander("📋 Guía de Configuración - `.streamlit/secrets.toml`", expanded=bool(config_issues)):
-        st.markdown("### 🔧 Configuración Requerida")
+if config_issues or st.button("📋 View Configuration Guide", key="show_config_help"):
+    with st.expander("📋 Configuration Guide - `.streamlit/secrets.toml`", expanded=bool(config_issues)):
+        st.markdown("### 🔧 Required Configuration")
         
         st.markdown("**1. Google Sheets Configuration**")
-        st.code("""# URL de tu Google Sheet "PO"
+        st.code("""# URL of your Google Sheet "PO"
 PO_SHEET_URL = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID"
-PO_WORKSHEET_NAME = "PO"  # Opcional, default: "PO"
-PO_COLUMN_NAME = "PO_Number"  # Opcional, default: "PO_Number"
+PO_WORKSHEET_NAME = "PO"  # Optional, default: "PO"
+PO_COLUMN_NAME = "PO_Number"  # Optional, default: "PO_Number"
 """, language="toml")
         
         st.markdown("**2. Google Credentials**")
-        st.code("""# Ruta a tus credenciales de Google Service Account
+        st.code("""# Path to your Google Service Account credentials
 GOOGLE_CREDENTIALS_PATH = "credentials/your-credentials.json"
 """, language="toml")
         
-        st.markdown("**3. CSV Template (Opcional)**")
-        st.code("""# Ruta al archivo template CSV
-GFS_TEMPLATE_CSV_PATH = "csv_template_french-v3.csv"  # Opcional
+        st.markdown("**3. CSV Template (Optional)**")
+        st.code("""# Path to the CSV template file
+GFS_TEMPLATE_CSV_PATH = "csv_template_french-v3.csv"  # Optional
 """, language="toml")
         
         st.markdown("---")
         
-        st.markdown("### 📝 Ejemplo Completo de Configuración")
+        st.markdown("### 📝 Complete Configuration Example")
         st.code("""# Google Credentials Configuration
 GOOGLE_CREDENTIALS_PATH = "credentials/starship-431114-129e01fe3c06.json"
 
@@ -522,21 +522,21 @@ GFS_TEMPLATE_CSV_PATH = "csv_template_french-v3.csv"
         
         st.markdown("---")
         
-        st.markdown("### ⚠️ Notas Importantes")
+        st.markdown("### ⚠️ Important Notes")
         st.markdown("""
-        - **Compartir Google Sheet**: Asegúrate de compartir tu Google Sheet con el email de la cuenta de servicio
-        - **Ubicación del Template CSV**: El archivo template debe estar en la raíz del proyecto o especifica la ruta completa
-        - **Formato del Template**: El CSV debe tener headers (primera fila con nombres de columnas)
+        - **Share Google Sheet**: Make sure to share your Google Sheet with the service account email
+        - **CSV Template Location**: The template file must be in the project root or specify the full path
+        - **Template Format**: The CSV must have headers (first row with column names)
         """)
         
         if config_issues:
             st.markdown("---")
-            st.info("💡 **Después de configurar los valores requeridos, recarga la página para que los cambios surtan efecto.**")
+            st.info("💡 **After configuring the required values, reload the page for the changes to take effect.**")
 
 # Only show the main workflow if configuration is complete
 if config_issues:
     st.divider()
-    st.info("🔒 **Por favor completa la configuración antes de usar esta herramienta.**")
+    st.info("🔒 **Please complete the configuration before using this tool.**")
 
 # ============================================================================
 # MAIN WORKFLOW (only if configuration is complete)
@@ -545,19 +545,19 @@ if not config_issues:
     st.divider()
     
     # Input form
-    st.subheader("🔹 Paso 1: Ingresa el Número de PO")
+    st.subheader("🔹 Step 1: Enter PO Number")
 
     po_input = st.text_input(
-        "Número de PO",
-        placeholder="Ejemplo: PO02337",
-        help="Ingresa el número de Purchase Order que quieres procesar"
+        "PO Number",
+        placeholder="Example: PO02337",
+        help="Enter the Purchase Order number you want to process"
     )
 
     col1, col2 = st.columns([1, 4])
 
     with col1:
         generate_button = st.button(
-            "🔍 Generar CSV", 
+            "🔍 Generate CSV", 
             type="primary", 
             use_container_width=True,
             disabled=not PO_SHEET_URL
@@ -565,16 +565,16 @@ if not config_issues:
 
     # Show step status
     if st.session_state.po_data:
-        st.success("✅ Paso 1 completado: PO encontrado")
+        st.success("✅ Step 1 completed: PO found")
     else:
-        st.info("⏳ Paso 1: Esperando que ingreses el número de PO")
+        st.info("⏳ Step 1: Waiting for you to enter the PO number")
 
     # Process when button is pressed
     if generate_button:
         if not po_input or not po_input.strip():
-            st.error("❌ Por favor ingresa un número de PO")
+            st.error("❌ Please enter a PO number")
         else:
-            with st.spinner("🔍 Buscando PO en Google Sheets..."):
+            with st.spinner("🔍 Searching for PO in Google Sheets..."):
                 # Search for the PO
                 po_data, error = get_po_data(po_input.strip())
                 
@@ -584,14 +584,14 @@ if not config_issues:
                     elif "Duplicate PO" in error:
                         st.error(f"❌ {error}")
                     else:
-                        # Mostrar errores largos con mejor formato
-                        st.error("❌ Error al buscar el PO")
+                        # Show long errors with better formatting
+                        st.error("❌ Error searching for PO")
                         st.markdown(error)
                 else:
                     st.session_state.po_data = po_data
                     
                     # Load the template
-                    with st.spinner("📄 Cargando template CSV..."):
+                    with st.spinner("📄 Loading CSV template..."):
                         template_df, template_error = load_template()
                         
                         if template_error:
@@ -628,40 +628,40 @@ if not config_issues:
                                 st.error(f"❌ {validation_error}")
                             else:
                                 # Fill the template
-                                with st.spinner("⚙️ Generando CSV..."):
+                                with st.spinner("⚙️ Generating CSV..."):
                                     filled_df, fill_error = fill_template(po_data, template_df)
                                     
                                     if fill_error:
                                         st.error(f"❌ {fill_error}")
                                     else:
                                         st.session_state.csv_generated = filled_df
-                                        st.success(f"✅ CSV generado exitosamente para PO {po_input.strip()}")
+                                        st.success(f"✅ CSV generated successfully for PO {po_input.strip()}")
 
     # Show PO data if available
     if st.session_state.po_data:
         st.divider()
-        st.subheader("🔹 Paso 2: Datos del PO Encontrados")
+        st.subheader("🔹 Step 2: PO Data Found")
         
         # Show data in table format
         po_df = pd.DataFrame([st.session_state.po_data])
         st.dataframe(po_df.T, use_container_width=True, height=300)
         
-        with st.expander("📋 Ver Datos del PO (JSON)", expanded=False):
+        with st.expander("📋 View PO Data (JSON)", expanded=False):
             st.json(st.session_state.po_data)
         
         if st.session_state.csv_generated is not None:
-            st.success("✅ Paso 2 completado: CSV generado exitosamente")
+            st.success("✅ Step 2 completed: CSV generated successfully")
         else:
-            st.info("⏳ Paso 2: Revisando datos del PO...")
+            st.info("⏳ Step 2: Reviewing PO data...")
     else:
         st.divider()
-        st.subheader("🔹 Paso 2: Datos del PO")
-        st.info("⏳ Esperando que se busque el PO...")
+        st.subheader("🔹 Step 2: PO Data")
+        st.info("⏳ Waiting for PO to be searched...")
 
     # Show download button if CSV is generated
     if st.session_state.csv_generated is not None:
         st.divider()
-        st.subheader("🔹 Paso 3: Descargar CSV")
+        st.subheader("🔹 Step 3: Download CSV")
         
         # Convert DataFrame to CSV in memory
         csv_buffer = io.StringIO()
@@ -676,7 +676,7 @@ if not config_issues:
         filename = f"GFS_{po_number}.csv"
         
         st.download_button(
-            label="📥 Descargar CSV para GFS",
+            label="📥 Download CSV for GFS",
             data=csv_string,
             file_name=filename,
             mime="text/csv",
@@ -685,37 +685,37 @@ if not config_issues:
         )
         
         # Show CSV preview
-        with st.expander("👁️ Vista Previa del CSV", expanded=False):
+        with st.expander("👁️ CSV Preview", expanded=False):
             st.dataframe(st.session_state.csv_generated, use_container_width=True)
         
-        st.success("✅ Paso 3: CSV listo para descargar")
+        st.success("✅ Step 3: CSV ready to download")
     else:
         st.divider()
-        st.subheader("🔹 Paso 3: Descargar CSV")
-        st.info("⏳ Esperando que se genere el CSV...")
+        st.subheader("🔹 Step 3: Download CSV")
+        st.info("⏳ Waiting for CSV to be generated...")
 
     # Help information
     st.divider()
-    with st.expander("ℹ️ Información y Guía de Uso"):
+    with st.expander("ℹ️ Information and Usage Guide"):
         st.markdown("""
-        ### 📖 Flujo de Trabajo:
+        ### 📖 Workflow:
         
-        1. **Ingresa el número de PO** (ejemplo: PO02337)
-        2. La aplicación busca el PO en Google Sheets
-        3. Se carga el template CSV
-        4. Los datos del PO se llenan en el template
-        5. Descarga el CSV final listo para GFS
+        1. **Enter the PO number** (example: PO02337)
+        2. The application searches for the PO in Google Sheets
+        3. The CSV template is loaded
+        4. PO data is filled into the template
+        5. Download the final CSV ready for GFS
         
-        ### 🔄 Mapeo de Datos:
+        ### 🔄 Data Mapping:
         
-        - El mapeo de datos se hace automáticamente buscando coincidencias entre las columnas del template y los campos del PO
-        - Si necesitas mapeos específicos, edita el diccionario `COLUMN_MAPPING` en el código
-        - El CSV se genera 100% en memoria, sin escribir archivos temporales
+        - Data mapping is done automatically by matching template columns with PO fields
+        - If you need specific mappings, edit the `COLUMN_MAPPING` dictionary in the code
+        - The CSV is generated 100% in memory, without writing temporary files
         
-        ### 📝 Notas:
+        ### 📝 Notes:
         
-        - **Template CSV**: Debe tener headers (primera fila con nombres de columnas)
-        - **Búsqueda de PO**: La búsqueda es case-insensitive (no distingue mayúsculas/minúsculas)
-        - **Validación**: El sistema valida que exista el PO antes de generar el CSV
+        - **Template CSV**: Must have headers (first row with column names)
+        - **PO Search**: The search is case-insensitive (does not distinguish uppercase/lowercase)
+        - **Validation**: The system validates that the PO exists before generating the CSV
         """)
 
