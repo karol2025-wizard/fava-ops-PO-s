@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Tuple
 import streamlit as st
+import logging
 from shared.database_manager import DatabaseManager
 from shared.database_schema import SCHEMAS
 
@@ -79,8 +80,20 @@ class DatabaseOperations:
 
     def get_latest_order_date(self) -> datetime:
         """Fetch the most recent order date from the database."""
-        result = self.db.fetch_one("SELECT MAX(created_time) FROM clover_orders")
-        return result[0] if result and result[0] else datetime.now() - timedelta(days=1)
+        try:
+            # Get all orders and find the max date
+            all_orders = self.db.fetch_all("SELECT created_time FROM clover_orders ORDER BY created_time DESC LIMIT 1")
+            if all_orders and len(all_orders) > 0:
+                created_time = all_orders[0].get('created_time')
+                if isinstance(created_time, str):
+                    return datetime.fromisoformat(created_time.replace('Z', '+00:00'))
+                elif isinstance(created_time, datetime):
+                    return created_time
+            return datetime.now() - timedelta(days=1)
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting latest order date: {e}")
+            return datetime.now() - timedelta(days=1)
 
     def save_orders(self, orders: List[Any]):
         """
@@ -154,14 +167,53 @@ class DatabaseOperations:
 
     def get_summary(self, start_date: datetime) -> List[Dict]:
         """Get summary of imported orders."""
-        query = """
-        SELECT 
-            DATE(created_time) as date,
-            COUNT(*) as orders,
-            SUM(total) as total
-        FROM clover_orders
-        WHERE created_time >= %s
-        GROUP BY DATE(created_time)
-        ORDER BY date DESC
-        """
-        return self.db.fetch_all(query, (start_date,))
+        try:
+            # Get all orders after start_date
+            all_orders = self.db.fetch_all("SELECT created_time, total FROM clover_orders")
+            
+            # Filter and group by date
+            from collections import defaultdict
+            summary_dict = defaultdict(lambda: {'orders': 0, 'total': 0.0})
+            
+            for order in all_orders:
+                created_time_str = order.get('created_time')
+                if not created_time_str:
+                    continue
+                
+                # Parse date
+                try:
+                    if isinstance(created_time_str, str):
+                        order_date = datetime.fromisoformat(created_time_str.replace('Z', '+00:00'))
+                    elif isinstance(created_time_str, datetime):
+                        order_date = created_time_str
+                    else:
+                        continue
+                    
+                    # Check if after start_date
+                    if order_date < start_date:
+                        continue
+                    
+                    # Group by date (YYYY-MM-DD)
+                    date_key = order_date.date().isoformat()
+                    summary_dict[date_key]['orders'] += 1
+                    total = order.get('total', 0)
+                    if isinstance(total, (int, float)):
+                        summary_dict[date_key]['total'] += float(total)
+                except Exception as e:
+                    continue
+            
+            # Convert to list format
+            result = [
+                {
+                    'date': date,
+                    'orders': data['orders'],
+                    'total': data['total']
+                }
+                for date, data in sorted(summary_dict.items(), reverse=True)
+            ]
+            
+            return result
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting summary: {e}")
+            return []

@@ -10,6 +10,7 @@ import os
 # Add the project root to Python path to import shared modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.database_manager import DatabaseManager
+from shared.production_workflow import ProductionWorkflow
 
 # Page configuration
 st.set_page_config(
@@ -115,148 +116,89 @@ def update_failed_orders(failed_orders_data):
         st.error(f"❌ Error updating failed orders: {str(e)}")
         raise
 
-def process_selected_orders(selected_orders, server_url, processing_mode):
-    """Process the selected orders and display results."""
+def process_selected_orders(selected_orders, server_url=None, processing_mode="Batch Processing (Recommended)"):
+    """Process the selected orders using ProductionWorkflow to update MRPeasy."""
     
     try:
-        # Convert database records to order format expected by the API
-        orders = []
-        for order in selected_orders:
-            orders.append({
-                "lot_number": order['lot_code'],
-                "quantity": float(order['quantity'])
-            })
-
+        # Initialize ProductionWorkflow
+        workflow = ProductionWorkflow()
+        
         if processing_mode == "Batch Processing (Recommended)":
-            # Batch processing
+            # Batch processing using ProductionWorkflow
             st.subheader("🔄 Processing Orders in Batch...")
-
-            payload = {"orders": orders}
-
+            
+            successful_order_ids = []
+            failed_orders_data = []
+            results = []
+            
             with st.spinner("Processing batch request..."):
-                response = requests.post(
-                    f"{server_url}/process_mo",
-                    json=payload,
-                    headers={'Content-Type': 'application/json'},
-                    timeout=600  # 10 minutes timeout
-                )
-
-            # Update the database based on results
-            # Process results regardless of status code if we have valid JSON response
-            try:
-                result_data = response.json()
-                results = result_data.get('results', [])
-
-                # If we have results, process them regardless of HTTP status
-                if results:
-                    # Process each result individually
-                    successful_order_ids = []
-                    failed_orders_data = []
-
-                    # Create a mapping of lot_code to order_id for quick lookup
-                    # Use case-insensitive matching by normalizing both keys
-                    lot_code_to_order_id = {}
-                    lot_code_normalized_to_order = {}
-                    for order in selected_orders:
-                        lot_code = order['lot_code']
-                        lot_code_to_order_id[lot_code] = order['id']
-                        # Also create normalized version for case-insensitive matching
-                        lot_code_normalized_to_order[lot_code.strip().upper() if lot_code else ''] = {
-                            'id': order['id'],
-                            'original': lot_code
-                        }
-
-                    st.write("### Processing Results:")
-                    unmatched_results = []
-                    for result in results:
-                        lot_number = result.get('lot_number', '')
-                        is_success = result.get('success', False)
-                        
-                        # Try exact match first
-                        if lot_number in lot_code_to_order_id:
-                            order_id = lot_code_to_order_id[lot_number]
-                        # Try case-insensitive match
-                        elif lot_number and lot_number.strip().upper() in lot_code_normalized_to_order:
-                            order_id = lot_code_normalized_to_order[lot_number.strip().upper()]['id']
-                            original_lot_code = lot_code_normalized_to_order[lot_number.strip().upper()]['original']
-                            st.warning(f"⚠️ Lot number case mismatch: '{lot_number}' matched '{original_lot_code}'")
-                        else:
-                            unmatched_results.append(lot_number)
-                            st.warning(f"⚠️ Result for lot number '{lot_number}' not found in selected orders")
-                            continue
-                        
-                        if is_success:
-                            # Add to successful orders list
-                            successful_order_ids.append(order_id)
-                            st.write(f"✅ {lot_number}: Success")
-                        else:
-                            # Add to failed orders list
-                            error_message = result.get('error', 'Unknown error')
-                            failed_orders_data.append({
-                                'lot_number': lot_number,
-                                'error': error_message
-                            })
-                            st.write(f"❌ {lot_number}: Failed - {error_message}")
+                for order in selected_orders:
+                    lot_code = order['lot_code']
+                    quantity = float(order['quantity'])
+                    uom = order.get('uom')
                     
-                    if unmatched_results:
-                        st.error(f"❌ {len(unmatched_results)} result(s) could not be matched to selected orders: {unmatched_results}")
-
-                    # Update successful orders
-                    if successful_order_ids:
-                        try:
-                            rows_updated = update_processed_orders(successful_order_ids)
-                            if rows_updated > 0:
-                                st.success(f"✅ Database updated - {rows_updated} orders marked as processed!")
-                            else:
-                                st.error(f"❌ Database update failed - 0 rows updated for {len(successful_order_ids)} orders")
-                        except Exception as e:
-                            st.error(f"❌ Failed to update database: {str(e)}")
+                    # Process using ProductionWorkflow
+                    success, result_data, message = workflow.process_production_completion(
+                        lot_code=lot_code,
+                        produced_quantity=quantity,
+                        uom=uom,
+                        item_code=None  # Will be retrieved from MO lookup
+                    )
                     
-                    # Update failed orders
-                    if failed_orders_data:
-                        try:
-                            update_failed_orders(failed_orders_data)
-                            st.warning(f"⚠️ Database updated - {len(failed_orders_data)} orders marked as failed!")
-                        except Exception as e:
-                            st.error(f"❌ Failed to update failed orders in database: {str(e)}")
-
-                    # Summary message
-                    if successful_order_ids and failed_orders_data:
-                        st.info(f"📊 Mixed results: {len(successful_order_ids)} succeeded, {len(failed_orders_data)} failed")
-                    elif successful_order_ids:
-                        st.success(f"🎉 All {len(successful_order_ids)} orders processed successfully!")
-                    elif failed_orders_data:
-                        st.error(f"❌ All {len(failed_orders_data)} orders failed")
+                    results.append({
+                        'lot_number': lot_code,
+                        'success': success,
+                        'message': message,
+                        'result_data': result_data
+                    })
+                    
+                    if success:
+                        successful_order_ids.append(order['id'])
+                        st.write(f"✅ {lot_code}: {message}")
                     else:
-                        st.warning("⚠️ No results found in response")
-                        
-                    # Show overall status if not 200
-                    if response.status_code != 200:
-                        st.warning(f"⚠️ Overall batch status: {response.status_code} - but individual results were processed")
+                        failed_orders_data.append({
+                            'lot_number': lot_code,
+                            'error': message
+                        })
+                        st.write(f"❌ {lot_code}: Failed - {message}")
 
-                else:
-                    # No results array, treat as complete failure
-                    st.error(f"❌ Batch request failed with status {response.status_code}")
-                    st.json(result_data)
-
-            except Exception as e:
-                # Failed to parse JSON or other error
-                st.error(f"❌ Batch request failed with status {response.status_code}")
-                st.error(f"Error processing response: {str(e)}")
+            # Update database based on results
+            st.write("### Processing Results:")
+            
+            # Update successful orders
+            if successful_order_ids:
                 try:
-                    # Try to show JSON if possible
-                    error_data = response.json()
-                    st.json(error_data)
-                except:
-                    # Show raw response
-                    st.text("Raw response:")
-                    st.code(response.text)
+                    rows_updated = update_processed_orders(successful_order_ids)
+                    if rows_updated > 0:
+                        st.success(f"✅ Database updated - {rows_updated} orders marked as processed!")
+                    else:
+                        st.error(f"❌ Database update failed - 0 rows updated for {len(successful_order_ids)} orders")
+                except Exception as e:
+                    st.error(f"❌ Failed to update database: {str(e)}")
+            
+            # Update failed orders
+            if failed_orders_data:
+                try:
+                    update_failed_orders(failed_orders_data)
+                    st.warning(f"⚠️ Database updated - {len(failed_orders_data)} orders marked as failed!")
+                except Exception as e:
+                    st.error(f"❌ Failed to update failed orders in database: {str(e)}")
 
-            # Always display results regardless of database update success
-            display_batch_results(response, orders)
+            # Summary message
+            if successful_order_ids and failed_orders_data:
+                st.info(f"📊 Mixed results: {len(successful_order_ids)} succeeded, {len(failed_orders_data)} failed")
+            elif successful_order_ids:
+                st.success(f"🎉 All {len(successful_order_ids)} orders processed successfully!")
+            elif failed_orders_data:
+                st.error(f"❌ All {len(failed_orders_data)} orders failed")
+            else:
+                st.warning("⚠️ No results to process")
+
+            # Display batch results
+            display_batch_results_local(results, selected_orders)
 
         else:
-            # Individual processing
+            # Individual processing using ProductionWorkflow
             st.subheader("🔄 Processing Orders Individually...")
 
             results = []
@@ -264,56 +206,64 @@ def process_selected_orders(selected_orders, server_url, processing_mode):
             processed_order_ids = []
             failed_orders_data = []
 
-            for i, order in enumerate(orders):
-                st.write(f"Processing order {i + 1}/{len(orders)}: {order['lot_number']}")
+            for i, order in enumerate(selected_orders):
+                lot_code = order['lot_code']
+                quantity = float(order['quantity'])
+                uom = order.get('uom')
+                
+                st.write(f"Processing order {i + 1}/{len(selected_orders)}: {lot_code}")
 
                 try:
-                    with st.spinner(f"Processing {order['lot_number']}..."):
-                        response = requests.post(
-                            f"{server_url}/process_mo",
-                            json=order,
-                            headers={'Content-Type': 'application/json'},
-                            timeout=300  # 5 minutes timeout
+                    with st.spinner(f"Processing {lot_code}..."):
+                        # Process using ProductionWorkflow
+                        success, result_data, message = workflow.process_production_completion(
+                            lot_code=lot_code,
+                            produced_quantity=quantity,
+                            uom=uom,
+                            item_code=None  # Will be retrieved from MO lookup
                         )
 
-                    success = response.status_code == 200
                     results.append({
-                        "order": order,
-                        "response": response,
-                        "success": success
+                        "order": {
+                            "lot_number": lot_code,
+                            "quantity": quantity
+                        },
+                        "success": success,
+                        "message": message,
+                        "result_data": result_data
                     })
 
                     # If successful, add to list for database update
                     if success:
-                        processed_order_ids.append(selected_orders[i]['id'])
+                        processed_order_ids.append(order['id'])
+                        st.write(f"✅ {lot_code}: {message}")
                     else:
-                        # If failed, extract error message for database update
-                        try:
-                            error_data = response.json()
-                            error_message = error_data.get('error', f'HTTP {response.status_code}')
-                        except:
-                            error_message = f'HTTP {response.status_code}'
-                        
                         failed_orders_data.append({
-                            'lot_number': order['lot_number'],
-                            'error': error_message
+                            'lot_number': lot_code,
+                            'error': message
                         })
+                        st.write(f"❌ {lot_code}: Failed - {message}")
 
                 except Exception as e:
+                    error_msg = str(e)
                     results.append({
-                        "order": order,
-                        "response": None,
-                        "error": str(e),
-                        "success": False
+                        "order": {
+                            "lot_number": lot_code,
+                            "quantity": quantity
+                        },
+                        "success": False,
+                        "error": error_msg,
+                        "message": error_msg
                     })
                     
                     # Add to failed orders for database update
                     failed_orders_data.append({
-                        'lot_number': order['lot_number'],
-                        'error': str(e)
+                        'lot_number': lot_code,
+                        'error': error_msg
                     })
+                    st.write(f"❌ {lot_code}: Error - {error_msg}")
 
-                progress_bar.progress((i + 1) / len(orders))
+                progress_bar.progress((i + 1) / len(selected_orders))
 
             # Update database for successfully processed orders
             if processed_order_ids:
@@ -339,57 +289,76 @@ def process_selected_orders(selected_orders, server_url, processing_mode):
     except Exception as e:
         st.error(f"Processing failed: {str(e)}")
 
-def display_batch_results(response, orders):
-    """Display results from batch processing."""
+def display_batch_results_local(results, orders):
+    """Display results from batch processing using local ProductionWorkflow."""
 
     st.subheader("📊 Batch Processing Results")
 
     # Add timestamp
     st.write(f"**Processed at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    if response.status_code == 200:
-        try:
-            result_data = response.json()
+    if results:
+        # Summary metrics
+        total = len(results)
+        successful = sum(1 for r in results if r.get('success', False))
+        failed = total - successful
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Orders", total)
+        with col2:
+            st.metric("Successful", successful)
+        with col3:
+            st.metric("Failed", failed)
+        with col4:
+            success_rate = (successful / max(total, 1)) * 100
+            st.metric("Success Rate", f"{success_rate:.1f}%")
 
-            # Summary metrics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Orders", result_data.get('total_processed', 0))
-            with col2:
-                st.metric("Successful", result_data.get('successful', 0))
-            with col3:
-                st.metric("Failed", result_data.get('failed', 0))
-            with col4:
-                success_rate = (result_data.get('successful', 0) / max(result_data.get('total_processed', 1), 1)) * 100
-                st.metric("Success Rate", f"{success_rate:.1f}%")
+        # Overall status
+        if successful == total:
+            st.success("✅ All orders processed successfully!")
+        elif successful > 0:
+            st.warning("⚠️ Some orders failed to process")
+        else:
+            st.error("❌ All orders failed")
 
-            # Overall status
-            if result_data.get('success', False):
-                st.success("✅ All orders processed successfully!")
-            else:
-                st.warning("⚠️ Some orders failed to process")
+        # Detailed results
+        st.subheader("Detailed Results")
 
-            # Detailed results
-            st.subheader("Detailed Results")
-
-            results = result_data.get('results', [])
-            for i, result in enumerate(results):
-                with st.expander(
-                        f"Order {i + 1}: {result.get('lot_number', 'Unknown')} - {'✅ Success' if result.get('success') else '❌ Failed'}"):
-                    st.json(result)
-
-        except Exception as e:
-            st.error(f"Error parsing response: {str(e)}")
-            st.text("Raw response:")
-            st.code(response.text)
+        for i, result in enumerate(results):
+            lot_number = result.get('lot_number', 'Unknown')
+            success = result.get('success', False)
+            message = result.get('message', '')
+            result_data = result.get('result_data')
+            
+            with st.expander(
+                    f"Order {i + 1}: {lot_number} - {'✅ Success' if success else '❌ Failed'}"):
+                st.write(f"**Lot Code:** {lot_number}")
+                st.write(f"**Status:** {'✅ Success' if success else '❌ Failed'}")
+                st.write(f"**Message:** {message}")
+                
+                if result_data and success:
+                    st.write("**MO Details:**")
+                    mo_lookup = result_data.get('mo_lookup', {})
+                    mo_update = result_data.get('mo_update', {})
+                    st.write(f"- MO Number: {mo_lookup.get('mo_number', 'N/A')}")
+                    st.write(f"- Item Code: {mo_lookup.get('item_code', 'N/A')}")
+                    st.write(f"- Actual Quantity: {mo_update.get('actual_quantity', 'N/A')}")
+                    st.write(f"- Status: {mo_update.get('status', 'N/A')}")
+                    
+                    # Show summary PDF if available
+                    summary_pdf = result_data.get('summary_pdf')
+                    if summary_pdf:
+                        st.download_button(
+                            label="📥 Download Production Summary PDF",
+                            data=summary_pdf.getvalue(),
+                            file_name=f"production_summary_{lot_number}.pdf",
+                            mime="application/pdf"
+                        )
+                elif not success:
+                    st.error(f"**Error:** {message}")
     else:
-        st.error(f"❌ Request failed with status {response.status_code}")
-        try:
-            error_data = response.json()
-            st.json(error_data)
-        except:
-            st.text("Raw response:")
-            st.code(response.text)
+        st.warning("⚠️ No results to display")
 
 def display_individual_results(results):
     """Display results from individual processing."""
@@ -439,32 +408,18 @@ def display_individual_results(results):
 
 # Title and description
 st.title("🏭 MRP Easy - Manufacturing Order Processor")
-st.markdown("Process manufacturing orders from database")
+st.markdown("Process manufacturing orders from database and update MRPeasy with actual production quantities")
 
-# Server URL input
-st.sidebar.header("Server Configuration")
-server_url = st.sidebar.text_input(
-    "Server URL",
-    value=secrets['mrpeasy-could-run-po-automation-service-url'],
-    help="Enter your deployed service URL"
-)
-
-# Remove trailing slash if present
-server_url = server_url.rstrip('/')
-
-# Test server connection
-if st.sidebar.button("Test Server Connection"):
-    try:
-        with st.spinner("Testing connection..."):
-            response = requests.get(f"{server_url}/health", timeout=10)
-            if response.status_code == 200:
-                health_data = response.json()
-                st.sidebar.success("✅ Server is healthy!")
-                st.sidebar.json(health_data)
-            else:
-                st.sidebar.error(f"❌ Server returned status {response.status_code}")
-    except Exception as e:
-        st.sidebar.error(f"❌ Connection failed: {str(e)}")
+# Info sidebar
+st.sidebar.header("ℹ️ Information")
+st.sidebar.info("""
+This page processes production entries from the Lot App and updates MRPeasy:
+- Looks up MO by Lot Code
+- Updates actual produced quantity
+- Changes status to Done
+- Closes the manufacturing order automatically
+- Generates production summary
+""")
 
 # Initialize session state
 if 'pending_orders' not in st.session_state:
@@ -625,10 +580,7 @@ with col2:
             )
             
             if st.button("🚀 Process Selected Orders", type="primary"):
-                if not server_url or server_url.strip() == "":
-                    st.error("Please configure the server URL in the sidebar")
-                else:
-                    process_selected_orders(selected_orders, server_url, processing_mode)
+                process_selected_orders(selected_orders, None, processing_mode)
         else:
             st.info("Select orders from the left panel to process them")
     else:

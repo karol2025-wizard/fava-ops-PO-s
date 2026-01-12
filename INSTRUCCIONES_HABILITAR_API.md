@@ -1,3 +1,4 @@
+
 # Instrucciones para Habilitar Google Sheets API
 
 ## Problema
@@ -41,4 +42,5 @@ Deberías ver: `✅ Sheet abierto exitosamente`
 - Necesitas tener permisos de administrador o editor en el proyecto de Google Cloud
 - Si no tienes acceso, contacta al administrador del proyecto
 - El proyecto ID es: `594969981919`
+
 

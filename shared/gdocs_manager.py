@@ -208,17 +208,39 @@ class GDocsManager:
         return recipes
 
     def _is_recipe_title(self, line):
-        """Check if a line is likely a recipe title"""
-        # Titles are usually short, may be in caps, or end with colon
-        if len(line) > 100:
+        """Check if a line is likely a recipe title - more flexible version"""
+        if not line or len(line) > 150:  # Too long to be a title
             return False
-        if line.endswith(':'):
+        
+        line_stripped = line.strip()
+        
+        # Ends with colon - very likely a title
+        if line_stripped.rstrip().endswith(':'):
             return True
-        if line.isupper() and len(line) < 50:
+        
+        # All uppercase and reasonably short - likely a title
+        if line_stripped.isupper() and len(line_stripped) < 60:
             return True
-        # Check for common recipe title patterns
-        if re.match(r'^[A-Z][a-z]+(\s+[A-Z][a-z]+)*$', line) and len(line) < 50:
+        
+        # Title case pattern (First Word Capitalized)
+        if re.match(r'^[A-Z][a-zA-Z0-9\s\-\(\):]+$', line_stripped) and len(line_stripped) < 80:
+            # Check if it's not all caps (which we already handled)
+            if not line_stripped.isupper():
+                return True
+        
+        # Contains item code pattern (A####) and is reasonably short
+        if re.search(r'[A-Z]\d{4}', line_stripped) and len(line_stripped) < 100:
             return True
+        
+        # Short lines that look like titles (no sentence-ending punctuation)
+        if len(line_stripped) < 60 and not line_stripped.endswith('.') and not line_stripped.endswith('!') and not line_stripped.endswith('?'):
+            # Check if it contains common title words or patterns
+            if any(word in line_stripped.lower() for word in ['recipe', 'ingredient', 'instruction', 'method', 'preparation']):
+                return False  # These are section headers, not recipe titles
+            # If it's short and doesn't look like a sentence, might be a title
+            if len(line_stripped.split()) < 10:  # Less than 10 words
+                return True
+        
         return False
 
     def _is_ingredient_line(self, line):

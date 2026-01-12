@@ -1,16 +1,3 @@
-"""
-Generate CSV for GFS Platform from MRPeasy Purchase Orders
-
-This module allows generating CSV files in GFS format directly from MRPeasy PO numbers.
-The system:
-1. Fetches PO data from MRPeasy API
-2. Extracts vendor part numbers from purchase terms (vendor_product_code field)
-3. Falls back to Google Sheets database if needed
-4. Extracts quantities from vendor_quantity or quantity fields
-5. Generates CSV with columns: Item #, Case QTY
-
-Last working version: 2024-12-XX
-"""
 import streamlit as st
 import pandas as pd
 import io
@@ -1301,8 +1288,6 @@ if st.button("🔍 Generate CSV", type="primary", use_container_width=True):
             
             if error:
                 st.error(f"❌ {error}")
-            elif not po_data:
-                st.error("❌ No PO data returned from MRPeasy")
             else:
                 st.success(f"✅ PO {po_input.strip()} found!")
                 
@@ -1314,7 +1299,7 @@ if st.button("🔍 Generate CSV", type="primary", use_container_width=True):
                         st.error(f"❌ {gen_error}")
                         # Show debug information
                         with st.expander("🔍 Debug: Product Details", expanded=True):
-                            if po_data and po_data.get('products'):
+                            if po_data.get('products'):
                                 st.write("**Products in PO:**")
                                 for idx, product in enumerate(po_data['products'][:10], 1):
                                     st.write(f"**Product {idx}:** {product.get('item_code', 'N/A')}")

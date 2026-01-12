@@ -4,17 +4,21 @@ from requests.auth import HTTPBasicAuth
 from config import secrets
 from typing import Optional, Dict, List, Any, Union
 
-# Access a specific secret
-mrp_secret_key = secrets['MRPEASY_API_KEY']
-mrp_secret_secret = secrets['MRPEASY_API_SECRET']
-
 # Configuration
 BASE_URL = 'https://api.mrpeasy.com/rest/v1'
 
 class APIManager:
     def __init__(self):
         self.base_url = BASE_URL
-        self.auth = HTTPBasicAuth(mrp_secret_key, mrp_secret_secret)
+        # Access secrets safely when initializing, not at module level
+        try:
+            mrp_secret_key = secrets.get('MRPEASY_API_KEY', '')
+            mrp_secret_secret = secrets.get('MRPEASY_API_SECRET', '')
+            if not mrp_secret_key or not mrp_secret_secret:
+                raise ValueError("MRPEASY_API_KEY and MRPEASY_API_SECRET must be set in secrets")
+            self.auth = HTTPBasicAuth(mrp_secret_key, mrp_secret_secret)
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError(f"Failed to initialize APIManager: {str(e)}. Please check your secrets configuration.")
 
     def fetch_routings(self):
         """Fetch all routings from MRPeasy"""
@@ -228,30 +232,99 @@ class APIManager:
         manufacturing_orders = []
         start = 0
 
-        while True:
-            response = requests.get(
-                f"{self.base_url}/manufacturing-orders",
-                auth=self.auth,
-                params=filters,
-                headers={'content-type': 'application/json', 'range': f'items={start}-{start + 99}'}
-            )
+        try:
+            import time
+            while True:
+                response = requests.get(
+                    f"{self.base_url}/manufacturing-orders",
+                    auth=self.auth,
+                    params=filters,
+                    headers={'content-type': 'application/json', 'range': f'items={start}-{start + 99}'},
+                    timeout=30  # Add timeout
+                )
+                
+                # Handle rate limiting with retry
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get('Retry-After', 60))
+                    print(f"Rate limit hit. Waiting {retry_after} seconds before retry...")
+                    time.sleep(retry_after)
+                    continue  # Retry the same request
 
-            if response.status_code in [200, 206]:
-                orders = response.json()
-                if not orders:
-                    break
-                manufacturing_orders.extend(orders)
+                if response.status_code in [200, 206]:
+                    try:
+                        orders = response.json()
+                    except ValueError as e:
+                        error_msg = f"Failed to parse JSON response. Status: {response.status_code}, Response text: {response.text[:200]}"
+                        print(f"Error: {error_msg}")
+                        raise ValueError(error_msg)
+                    
+                    if not orders:
+                        break
+                    manufacturing_orders.extend(orders)
 
-                # If we received fewer than 100 records, we've reached the end
-                if len(orders) < 100:
-                    break
+                    # If we received fewer than 100 records, we've reached the end
+                    if len(orders) < 100:
+                        break
 
-                start += 100
-            else:
-                # You might want to raise an exception here with response.text instead
-                return None
+                    start += 100
+                    
+                    # Add a small delay between requests to avoid hitting rate limits
+                    # Only delay if we're fetching multiple pages
+                    if start > 0:
+                        time.sleep(0.5)  # 500ms delay between pages
+                elif response.status_code == 401:
+                    # Unauthorized - credentials issue
+                    error_msg = f"Authentication failed (401 Unauthorized). Please check your MRPEASY_API_KEY and MRPEASY_API_SECRET. Response: {response.text[:200]}"
+                    print(f"Error: {error_msg}")
+                    raise ValueError(error_msg)
+                elif response.status_code == 403:
+                    # Forbidden - permission issue
+                    error_msg = f"Access forbidden (403). Your API credentials may not have permission to access manufacturing orders. Response: {response.text[:200]}"
+                    print(f"Error: {error_msg}")
+                    raise ValueError(error_msg)
+                elif response.status_code == 404:
+                    # Not found - endpoint issue
+                    error_msg = f"Endpoint not found (404). The manufacturing-orders endpoint may not be available. Response: {response.text[:200]}"
+                    print(f"Error: {error_msg}")
+                    raise ValueError(error_msg)
+                elif response.status_code == 429:
+                    # Rate limit exceeded
+                    retry_after = response.headers.get('Retry-After', '60')
+                    error_msg = (
+                        f"Rate limit exceeded (429 Too Many Requests). "
+                        f"MRPeasy está limitando las solicitudes. "
+                        f"Espera {retry_after} segundos antes de intentar nuevamente. "
+                        f"Si estás obteniendo todos los MOs, esto puede tardar varios minutos."
+                    )
+                    print(f"Error: {error_msg}")
+                    raise ValueError(error_msg)
+                elif response.status_code >= 500:
+                    # Server error
+                    error_msg = f"MRPeasy server error ({response.status_code}). The service may be temporarily unavailable. Response: {response.text[:200]}"
+                    print(f"Error: {error_msg}")
+                    raise ValueError(error_msg)
+                else:
+                    # Other error
+                    error_msg = f"Unexpected response from MRPeasy API. Status: {response.status_code}, Response: {response.text[:200]}"
+                    print(f"Error: {error_msg}")
+                    raise ValueError(error_msg)
 
-        return manufacturing_orders
+            return manufacturing_orders
+        except requests.exceptions.Timeout:
+            error_msg = "Request to MRPeasy API timed out. Check your network connection."
+            print(f"Error: {error_msg}")
+            raise ValueError(error_msg)
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f"Connection error to MRPeasy API: {str(e)}. Check your internet connection and that MRPeasy service is available."
+            print(f"Error: {error_msg}")
+            raise ValueError(error_msg)
+        except ValueError:
+            # Re-raise ValueError (our custom errors)
+            raise
+        except Exception as e:
+            error_msg = f"Unexpected error fetching manufacturing orders: {str(e)}"
+            print(f"Error: {error_msg}")
+            raise ValueError(error_msg)
 
     def fetch_customer_orders(self):
         customer_orders = []
@@ -314,6 +387,11 @@ class APIManager:
 
     def get_item_details(self, item_code: str):
         """Fetch details for a specific item including purchase terms"""
+        if not item_code or not item_code.strip():
+            return None
+            
+        item_code = item_code.strip()
+        
         response = requests.get(
             f"{self.base_url}/items",
             auth=self.auth,
@@ -324,8 +402,25 @@ class APIManager:
         if response.status_code == 200:
             items = response.json()
             # Return the first (and should be only) item matching the code
-            return items[0] if items else None
+            if items:
+                return items[0]
+            else:
+                # Try case-insensitive search as fallback
+                # Fetch all items and search locally
+                all_items = self.fetch_all_products()
+                if all_items:
+                    # Try exact match first (case-sensitive)
+                    for item in all_items:
+                        if item.get('code') == item_code:
+                            return item
+                    # Try case-insensitive match
+                    for item in all_items:
+                        if item.get('code', '').upper() == item_code.upper():
+                            return item
+                return None
         else:
+            # Log the error for debugging
+            print(f"Error fetching item {item_code}: Status {response.status_code}, Response: {response.text}")
             return None
 
     def create_manufacturing_order(self, item_code=None, article_id=None, quantity=None, assigned_id=1, start_date=None,
@@ -350,10 +445,16 @@ class APIManager:
             # Get item details using the item code
             item = self.get_item_details(item_code)
             if not item:
-                raise ValueError(f"Item with code {item_code} not found")
+                # Provide more helpful error message
+                error_msg = f"Item with code '{item_code}' not found in MRPEasy system."
+                error_msg += " Please verify:"
+                error_msg += "\n1. The item code is correct (case-sensitive: e.g., 'A1567' not 'a1567')"
+                error_msg += "\n2. The item exists in your MRPEasy account"
+                error_msg += "\n3. Your API credentials have access to this item"
+                raise ValueError(error_msg)
             article_id = item.get('article_id')
             if not article_id:
-                raise ValueError(f"No article_id found for item with code {item_code}")
+                raise ValueError(f"No article_id found for item with code {item_code}. The item may not be properly configured in MRPEasy.")
 
         # Ensure we have an article_id and quantity
         if not article_id:
@@ -390,6 +491,59 @@ class APIManager:
             print("Failed to create manufacturing order.")
 
         return response
+    
+    def update_manufacturing_order(self, mo_id: int, actual_quantity: float = None, 
+                                   status: int = None, lot_code: str = None) -> requests.Response:
+        """
+        Update a manufacturing order with actual produced quantity and status.
+        
+        Args:
+            mo_id: Manufacturing Order ID
+            actual_quantity: Actual produced quantity (optional)
+            status: Status code (optional). Common statuses: 20=Done, 10=In Progress, etc.
+            lot_code: Lot code for confirmation (optional)
+        
+        Returns:
+            Response object from the API call
+        """
+        # First, get the current MO details
+        current_mo = self.get_manufacturing_order_details(mo_id)
+        if not current_mo:
+            raise ValueError(f"Manufacturing Order {mo_id} not found")
+        
+        # Prepare update payload
+        update_payload = {}
+        
+        # Update actual quantity if provided
+        if actual_quantity is not None:
+            update_payload['actual_quantity'] = actual_quantity
+        
+        # Update status if provided
+        if status is not None:
+            update_payload['status'] = status
+        
+        # Note: Lot code confirmation might need to be handled differently
+        # depending on MRPeasy API structure. This is a placeholder.
+        if lot_code:
+            # If MRPeasy supports lot code in update, add it here
+            # Otherwise, this might need to be handled via a different endpoint
+            pass
+        
+        # Use PUT method to update (standard REST pattern)
+        response = requests.put(
+            f"{self.base_url}/manufacturing-orders/{mo_id}",
+            auth=self.auth,
+            headers={'content-type': 'application/json'},
+            json=update_payload
+        )
+        
+        if response.status_code in [200, 204]:
+            print(f"Manufacturing order {mo_id} updated successfully.")
+        else:
+            print(f"Failed to update manufacturing order {mo_id}. Status: {response.status_code}, Response: {response.text}")
+        
+        return response
+    
     def get_lot_details(self, lot_code: str) -> Optional[Dict]:
         """Get details for a specific lot"""
         lots = self.fetch_stock_lots()
