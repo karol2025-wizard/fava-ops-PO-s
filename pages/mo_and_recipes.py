@@ -21,7 +21,6 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from reportlab.graphics.barcode import code128
 import requests
-from PIL import Image as PILImage
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -166,10 +165,6 @@ def initialize_session_state():
     # LEGACY STATES (maintained for compatibility)
     # ============================================
     
-    # Team/Area selection (Step 1)
-    if 'selected_team' not in st.session_state:
-        st.session_state.selected_team = None
-    
     # Step counter (1-4)
     if 'step' not in st.session_state:
         st.session_state.step = 1
@@ -203,6 +198,10 @@ def sync_legacy_states():
     """
     Synchronize legacy state variables with new state machine variables.
     This ensures backward compatibility during migration.
+    
+    TODO: Consider removing legacy states (selected_category, selected_item, created_mo_id)
+    if migration to new state machine (category_selected, item_selected, mo_number) is complete.
+    This would simplify the codebase and reduce complexity.
     
     Mappings:
     - selected_category <-> category_selected
@@ -241,7 +240,6 @@ def reset_state_machine():
     st.session_state.mo_number = None
     st.session_state.created_mo_id = None
     st.session_state.show_routing = False
-    st.session_state.selected_team = None
     st.session_state.step = 1
     st.session_state.show_recipe = False
     st.session_state.current_recipe = None
@@ -288,58 +286,7 @@ def reset_state_machine():
 #    Result: All states reset to None/False
 
 
-# Team name mapping: original_name -> display_name
-TEAM_NAME_MAPPING = {
-    'Alejandro Team': 'Dips and Sauces',
-    'Assembly Team': 'Kits',
-    'Butcher Team': 'Raw proteins',
-    'Grill Team': 'To re heat',
-    'Theadora Team': 'Appetizers',
-    'Samia Team': 'Dessert',
-    'Jorge Team': 'Preparation Bases',
-    'Rawad': 'Others',
-    'Bread Team': 'Bread'
-}
-
-# Expected items by team (for validation)
-EXPECTED_ITEMS_BY_TEAM = {
-    'Jorge Team': [
-        'A1233', 'A1635', 'A1615', 'A1619', 'A1861', 'A1639', 'A1574', 'A1490',
-        'A1634', 'A1600', 'A1942', 'A1631', 'A1315', 'A1691', 'A1693', 'A1696',
-        'A1646', 'A1640', 'A1176', 'A1903', 'A1011', 'A1650', 'A1641'
-    ],
-    'Alejandro Team': [
-        'A1564', 'A1563', 'A1566', 'A1549', 'A1280', 'A1612', 'A1545', 'A1575',
-        'A1550', 'A1565', 'A1616', 'A1649', 'A1544', 'A1871'
-    ],
-    'Assembly Team': [
-        'A1689', 'A1684', 'A1685', 'A1026', 'A1688', 'A1737', 'A1686', 'A1629',
-        'A1385', 'A1678'
-    ],
-    'Samia Team': [
-        'A1567', 'A1568', 'A1606', 'A1652', 'A1604', 'A1017', 'A1015', 'A1602',
-        'A1603', 'A1633'
-    ],
-    'Rawad': [
-        'A1876', 'A1935', 'A1925', 'A1628', 'A1553', 'A1907'
-    ],
-    'Theadora Team': [
-        'A1632', 'A1613', 'A1607'
-    ],
-    'Butcher Team': [
-        'A1499', 'A1614', 'A1547', 'A1543', 'A1647'
-    ],
-    'Grill Team': [
-        'A1049', 'A1653', 'A1697', 'A1720', 'A1452', 'A1698', 'A1694', 'A1692',
-        'A1690', 'A1551', 'A1643'
-    ],
-    'Bread Team': [
-        'A1558', 'A1561'
-    ]
-}
-
-# Reverse mapping: display_name -> original_name
-TEAM_NAME_REVERSE_MAPPING = {v: k for k, v in TEAM_NAME_MAPPING.items()}
+# Team validation code removed - was unused (selected_team never set in main flow)
 
 # Category icons for better visual accessibility
 CATEGORY_ICONS = {
@@ -483,45 +430,7 @@ def get_professional_category(item: Dict) -> str:
     return 'Other Products'
 
 
-def get_display_team_name(original_name: str) -> str:
-    """Convert original team name to display name"""
-    return TEAM_NAME_MAPPING.get(original_name, original_name)
-
-
-def get_original_team_name(display_name: str) -> str:
-    """Convert display team name back to original name"""
-    return TEAM_NAME_REVERSE_MAPPING.get(display_name, display_name)
-
-
-def validate_items_for_team(team_name: str, items: List[Dict]) -> Dict[str, Any]:
-    """Validate that expected items are present for a team"""
-    expected_codes = EXPECTED_ITEMS_BY_TEAM.get(team_name, [])
-    if not expected_codes:
-        return {
-            'has_validation': False,
-            'found': [],
-            'missing': [],
-            'extra': []
-        }
-    
-    # Get item codes from actual items
-    actual_codes = [item.get('code', '') for item in items if item.get('code')]
-    
-    # Find matches
-    found = [code for code in expected_codes if code in actual_codes]
-    missing = [code for code in expected_codes if code not in actual_codes]
-    extra = [code for code in actual_codes if code not in expected_codes]
-    
-    return {
-        'has_validation': True,
-        'found': found,
-        'missing': missing,
-        'extra': extra,
-        'total_expected': len(expected_codes),
-        'total_found': len(found),
-        'coverage': (len(found) / len(expected_codes) * 100) if expected_codes else 0
-    }
-
+# Team validation functions removed - were unused (selected_team never set in main flow)
 
 def display_cache_status(items: List[Dict], units: List[Dict]):
     """Display cache status in sidebar"""
@@ -578,29 +487,27 @@ def get_item_by_article_id(article_id: int, items: List[Dict]) -> Optional[Dict]
     return None
 
 
+def get_item_by_code(item_code: str, items: List[Dict]) -> Optional[Dict]:
+    """Get item details by item code from cached items (avoids API call)"""
+    if not items or not item_code:
+        return None
+    item_code_upper = item_code.strip().upper()
+    for item in items:
+        if item.get('code', '').upper() == item_code_upper:
+            return item
+    return None
+
+
+def get_display_team_name(team: Optional[str]) -> str:
+    """Get display name for team (handles None values for sorting)"""
+    return team if team else ""
+
+
 def parse_operation_description(description_str):
     """Parse the JSON string from operation description"""
     try:
         return json.loads(description_str)
     except (json.JSONDecodeError, TypeError):
-        return None
-
-
-def download_image(url, max_size=(100, 100)):
-    """Download and resize image from URL"""
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            img = PILImage.open(BytesIO(response.content))
-            img.thumbnail(max_size, PILImage.Resampling.LANCZOS)
-            
-            # Save to temporary file
-            temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-            img.save(temp_img.name, 'PNG')
-            return temp_img.name
-        return None
-    except Exception as e:
-        logger.error(f"Error downloading image: {e}")
         return None
 
 
@@ -694,15 +601,19 @@ def validate_batch_order_input(item_code: str, quantity: float, start_date: str)
     return True, ""
 
 
-def create_mo_batch(api: APIManager, item_code: str, quantity: float, start_date_str: str) -> Tuple[bool, Optional[int], str]:
+def create_mo_batch(api: APIManager, item_code: str, quantity: float, start_date_str: str, items_cache: Optional[List[Dict]] = None) -> Tuple[bool, Optional[int], str]:
     """
     Create a manufacturing order with validation.
+    
+    PERFORMANCE OPTIMIZATION: Uses cached items to look up article_id instead of making API call.
+    This reduces API calls from 1 per product to 0 (uses cache).
     
     Args:
         api: APIManager instance
         item_code: Item code string
         quantity: Quantity as float
         start_date_str: Start date in MM/DD/YYYY format
+        items_cache: Optional cached items list to avoid API call for item lookup
     
     Returns:
         Tuple of (success, mo_id, message)
@@ -716,13 +627,36 @@ def create_mo_batch(api: APIManager, item_code: str, quantity: float, start_date
         # Parse date to timestamp
         start_date_timestamp = parse_date_to_timestamp(start_date_str)
         
+        # PERFORMANCE: Look up article_id from cache to avoid API call
+        article_id = None
+        api_calls_saved = 0
+        if items_cache:
+            item = get_item_by_code(item_code.strip(), items_cache)
+            if item:
+                article_id = item.get('article_id')
+                if not article_id:
+                    return False, None, f"Item {item_code} found in cache but missing article_id"
+                api_calls_saved = 1  # Saved 1 API call by using cache
+                logger.info(f"Performance: Using cached article_id for {item_code} (saved 1 API call)")
+        
         # Create the manufacturing order
-        response = api.create_manufacturing_order(
-            item_code=item_code.strip(),
-            quantity=float(quantity),
-            assigned_id=1,
-            start_date=start_date_timestamp
-        )
+        # Use article_id if available (avoids API call), otherwise fall back to item_code
+        if article_id:
+            response = api.create_manufacturing_order(
+                article_id=article_id,
+                quantity=float(quantity),
+                assigned_id=1,
+                start_date=start_date_timestamp
+            )
+        else:
+            # Fallback: use item_code (will trigger API call in create_manufacturing_order)
+            logger.warning(f"Item {item_code} not found in cache, falling back to API lookup (1 API call required)")
+            response = api.create_manufacturing_order(
+                item_code=item_code.strip(),
+                quantity=float(quantity),
+                assigned_id=1,
+                start_date=start_date_timestamp
+            )
         
         if response.ok:
             # Handle response - could be int or dict
@@ -1727,34 +1661,11 @@ def main():
     # Filter to only show allowed item codes
     filtered_items = [item for item in filtered_items if item.get('code') in ALLOWED_ITEM_CODES]
     
-    # Add validation info in sidebar if a team is selected
-    if st.session_state.selected_team:
-        team_items = [item for item in filtered_items if item.get('custom_44680') == st.session_state.selected_team]
-        validation = validate_items_for_team(st.session_state.selected_team, team_items)
-        
-        if validation['has_validation']:
-            st.sidebar.divider()
-            st.sidebar.header("📊 Item Validation")
-            st.sidebar.metric("Items Found", f"{validation['total_found']}/{validation['total_expected']}")
-            st.sidebar.metric("Coverage", f"{validation['coverage']:.1f}%")
-            
-            if validation['missing']:
-                with st.sidebar.expander("⚠️ Missing Items"):
-                    for code in validation['missing']:
-                        st.sidebar.text(f"• {code}")
-            
-            if validation['extra']:
-                with st.sidebar.expander("ℹ️ Extra Items"):
-                    for code in validation['extra'][:10]:  # Show first 10
-                        st.sidebar.text(f"• {code}")
-                    if len(validation['extra']) > 10:
-                        st.sidebar.text(f"... and {len(validation['extra']) - 10} more")
-
     # Extract unique teams (custom_44680)
     teams = sorted(list(set([item.get('custom_44680') for item in filtered_items if item.get('custom_44680')])))
     
     # Sort teams by display name for better organization
-    teams = sorted(teams, key=lambda t: get_display_team_name(t))
+    teams = sorted(teams, key=get_display_team_name)
 
     # ============================================
     # ACTION SELECTION - Initial Decision Point
@@ -2296,8 +2207,14 @@ def main():
                                 current_date = int(datetime.now().timestamp())
                                 
                                 # Create the manufacturing order
+                                # Use article_id directly to avoid extra API call for item lookup
+                                article_id = selected_item.get('article_id')
+                                if not article_id:
+                                    st.error(f"❌ Item {selected_item.get('code')} missing article_id. Cannot create MO.")
+                                    return
+                                
                                 response = api.create_manufacturing_order(
-                                    item_code=selected_item.get('code'),
+                                    article_id=article_id,
                                     quantity=float(quantity),
                                     assigned_id=1,
                                     start_date=current_date
@@ -2416,11 +2333,13 @@ def main():
                     
                     if submitted:
                         # Validate and create MO
+                        # PERFORMANCE: Pass cached items to avoid API call per product
                         success, mo_id, message = create_mo_batch(
                             api,
                             item_code_input,
                             quantity_input,
-                            start_date_input
+                            start_date_input,
+                            items_cache=all_items  # Pass cached items to avoid API call
                         )
                         
                         if success:
