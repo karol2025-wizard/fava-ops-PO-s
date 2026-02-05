@@ -106,6 +106,8 @@ fava-ops-PO-s/
 
 ## 🤝 Contribuir
 
+Antes de hacer commit, revisa [ANTES_DE_COMMIT.md](ANTES_DE_COMMIT.md) (código sin usar, complejidad, rendimiento).
+
 1. Fork el proyecto
 2. Crea una rama para tu feature (`git checkout -b feature/AmazingFeature`)
 3. Commit tus cambios (`git commit -m 'Add some AmazingFeature'`)

@@ -1,0 +1,196 @@
+========================================
+GUIA PASO A PASO COMPLETA
+Para usar mo_and_recipes.exe en otra PC
+========================================
+
+PASO 1: PREPARAR LA CARPETA EN TU PC ACTUAL
+===========================================
+
+1.1. Abre el Explorador de Windows
+1.2. Ve a esta carpeta:
+     C:\Users\Operations - Fava\Desktop\code\fava ops PO's
+
+1.3. Haz doble clic en: EJECUTAR_AQUI.bat
+     (O si no funciona, haz doble clic en: copiar_para_otra_pc.bat)
+
+1.4. Espera a que termine (verás mensajes [OK] para cada archivo)
+
+1.5. Verifica que se creó la carpeta:
+     dist\mo_and_recipes_completo\
+
+1.6. Abre esa carpeta y verifica que tenga estos archivos:
+     ✓ mo_and_recipes.exe
+     ✓ pages\mo_and_recipes.py
+     ✓ shared\ (carpeta con archivos .py)
+     ✓ .streamlit\secrets.toml
+     ✓ credentials\ (carpeta con archivos JSON)
+     ✓ config.py
+
+
+PASO 2: COMPRIMIR LA CARPETA
+============================
+
+2.1. Ve a la carpeta: dist\mo_and_recipes_completo\
+
+2.2. Haz clic derecho en la carpeta "mo_and_recipes_completo"
+
+2.3. Selecciona: "Enviar a" → "Carpeta comprimida (en zip)"
+
+2.4. Espera a que se cree el archivo ZIP
+
+2.5. El archivo se llamará: mo_and_recipes_completo.zip
+
+
+PASO 3: COPIAR A LA OTRA PC
+============================
+
+3.1. Copia el archivo ZIP a la otra PC usando:
+     - USB
+     - Email
+     - Red compartida
+     - Google Drive / OneDrive
+     - Cualquier método que uses normalmente
+
+
+PASO 4: EN LA OTRA PC - DESCOMPRIMIR
+=====================================
+
+4.1. Copia el archivo ZIP a donde quieras (ej: Escritorio)
+
+4.2. Haz clic derecho en el archivo ZIP
+
+4.3. Selecciona: "Extraer todo..."
+
+4.4. Elige dónde extraer (ej: Escritorio)
+
+4.5. Asegúrate de que se cree la carpeta: mo_and_recipes_completo\
+
+
+PASO 5: VERIFICAR ESTRUCTURA EN LA OTRA PC
+===========================================
+
+5.1. Abre la carpeta: mo_and_recipes_completo\
+
+5.2. DEBE tener esta estructura exacta:
+
+    mo_and_recipes_completo\
+    ├── mo_and_recipes.exe          ← El ejecutable
+    ├── pages\
+    │   └── mo_and_recipes.py      ← Archivo Python
+    ├── shared\
+    │   ├── api_manager.py
+    │   ├── gdocs_manager.py
+    │   └── [otros archivos .py]
+    ├── .streamlit\
+    │   └── secrets.toml           ← Configuración
+    ├── credentials\
+    │   ├── starship-431114-129e01fe3c06.json
+    │   └── [otros archivos JSON]
+    ├── config.py
+    └── LEEME_PRIMERO.txt
+
+5.3. Si falta algún archivo, vuelve al PASO 1
+
+
+PASO 6: EJECUTAR EN LA OTRA PC
+===============================
+
+6.1. Haz doble clic en: mo_and_recipes.exe
+
+6.2. Se abrirá una ventana negra (consola) - NO LA CIERRES
+
+6.3. Espera unos segundos (puede tardar 10-30 segundos la primera vez)
+
+6.4. Se abrirá automáticamente tu navegador en:
+     http://localhost:8501
+
+6.5. Si NO se abre automáticamente:
+     - Abre tu navegador manualmente
+     - Escribe en la barra de direcciones: http://localhost:8501
+     - Presiona Enter
+
+
+PASO 7: USAR LA APLICACIÓN
+===========================
+
+7.1. La aplicación Streamlit se mostrará en el navegador
+
+7.2. Puedes usar todas las funciones normalmente
+
+7.3. Para cerrar:
+     - Cierra la ventana del navegador
+     - Cierra la ventana negra (consola) o presiona Ctrl+C
+
+
+========================================
+SOLUCIÓN DE PROBLEMAS
+========================================
+
+PROBLEMA: "No se encontró el archivo pages/mo_and_recipes.py"
+SOLUCIÓN:
+- Verifica que TODOS los archivos estén en la misma carpeta
+- No muevas archivos fuera de sus carpetas
+- Asegúrate de copiar TODA la carpeta, no solo el .exe
+
+PROBLEMA: "No se abre el navegador"
+SOLUCIÓN:
+- Abre manualmente: http://localhost:8501
+- Si no funciona, prueba: http://localhost:8502
+- Verifica que no haya un firewall bloqueando
+
+PROBLEMA: "Error de credenciales"
+SOLUCIÓN:
+- Verifica que .streamlit\secrets.toml esté presente
+- Verifica que credentials\ tenga los archivos JSON
+- Revisa las rutas en secrets.toml
+
+PROBLEMA: "La aplicación no inicia"
+SOLUCIÓN:
+- Verifica que todos los archivos estén presentes (PASO 5)
+- Ejecuta desde una ruta simple (ej: C:\test_app)
+- Verifica que no haya espacios raros en las rutas
+
+PROBLEMA: "Antivirus bloquea el .exe"
+SOLUCIÓN:
+- Agrega una excepción en tu antivirus
+- Es normal que PyInstaller marque como sospechoso
+- Puedes agregar la carpeta completa a excepciones
+
+
+========================================
+CHECKLIST ANTES DE COPIAR
+========================================
+
+Antes de comprimir, verifica:
+
+[ ] mo_and_recipes.exe existe
+[ ] pages\mo_and_recipes.py existe
+[ ] shared\ tiene archivos .py
+[ ] .streamlit\secrets.toml existe
+[ ] credentials\ tiene archivos JSON
+[ ] config.py existe
+
+Si todos están marcados, puedes comprimir y copiar.
+
+
+========================================
+NOTAS IMPORTANTES
+========================================
+
+1. NO copies solo el .exe - necesitas TODOS los archivos
+2. Mantén la estructura de carpetas exacta
+3. Todos los archivos deben estar en la misma carpeta
+4. La primera ejecución puede tardar más
+5. No cierres la ventana negra mientras uses la app
+
+
+========================================
+¿NECESITAS AYUDA?
+========================================
+
+Si algo no funciona:
+1. Verifica que todos los archivos estén presentes
+2. Revisa los mensajes de error en la consola
+3. Asegúrate de seguir todos los pasos en orden
+
+========================================

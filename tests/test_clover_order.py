@@ -2,7 +2,7 @@
 import pytest
 from datetime import datetime
 import pytz
-from pages.sales_data_clover import CloverOrder, DeliveryInfo
+from pages.analysis_folfol_import_sales import CloverOrder, DeliveryInfo
 
 
 @pytest.fixture

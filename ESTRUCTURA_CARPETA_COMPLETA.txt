@@ -1,0 +1,69 @@
+========================================
+ESTRUCTURA DE LA CARPETA COMPLETA
+========================================
+
+Esta es la estructura EXACTA que necesitas copiar a otra PC:
+
+mo_and_recipes_completo\
+│
+├── mo_and_recipes.exe          ← EJECUTABLE PRINCIPAL
+│
+├── pages\                      ← CARPETA (OBLIGATORIO)
+│   └── mo_and_recipes.py       ← Archivo Python principal
+│
+├── shared\                     ← CARPETA (OBLIGATORIO)
+│   ├── api_manager.py
+│   ├── boxhero_api_manager.py
+│   ├── database_manager.py
+│   ├── database_operations.py
+│   ├── database_schema.py
+│   ├── gdocs_manager.py
+│   ├── gsheets_manager.py
+│   ├── json_storage.py
+│   ├── mo_lookup.py
+│   ├── mo_update.py
+│   ├── production_capture.py
+│   ├── production_logging.py
+│   ├── production_summary.py
+│   └── production_workflow.py
+│
+├── .streamlit\                 ← CARPETA (OBLIGATORIO)
+│   └── secrets.toml            ← Configuracion y credenciales
+│
+├── credentials\                ← CARPETA (OBLIGATORIO)
+│   ├── apt-connection-423220-c8-eb9b74ac99dd.json
+│   └── starship-431114-129e01fe3c06.json
+│
+├── config.py                   ← Archivo de configuracion
+│
+├── LEEME_PRIMERO.txt           ← Instrucciones de uso
+│
+└── verificar_archivos_necesarios.bat  ← Script de verificacion
+
+========================================
+COMO USAR:
+========================================
+
+1. Ejecuta: PREPARAR_CARPETA_COMPLETA.bat
+   (o copiar_para_otra_pc.bat)
+
+2. Esto creara la carpeta: dist\mo_and_recipes_completo\
+
+3. Comprime esa carpeta completa (ZIP o RAR)
+
+4. Copia el archivo comprimido a la otra PC
+
+5. Descomprime en la otra PC
+
+6. Ejecuta mo_and_recipes.exe
+
+========================================
+IMPORTANTE:
+========================================
+
+- NO copies solo el .exe
+- Copia TODA la carpeta completa
+- Manten la estructura de carpetas
+- No muevas archivos fuera de sus carpetas
+
+========================================

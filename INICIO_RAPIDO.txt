@@ -1,0 +1,39 @@
+========================================
+INICIO RAPIDO - 3 PASOS
+========================================
+
+PASO 1: PREPARAR (en tu PC actual)
+-----------------------------------
+1. Doble clic en: EJECUTAR_AQUI.bat
+2. Espera a que termine
+3. Verifica con: VERIFICAR_ANTES_DE_COPIAR.bat
+
+PASO 2: COMPRIMIR
+-----------------
+1. Ve a: dist\mo_and_recipes_completo\
+2. Clic derecho → "Enviar a" → "Carpeta comprimida (en zip)"
+
+PASO 3: EN OTRA PC
+------------------
+1. Descomprime el ZIP
+2. Doble clic en: mo_and_recipes.exe
+3. Abre: http://localhost:8501
+
+========================================
+ARCHIVOS NECESARIOS:
+========================================
+
+✓ mo_and_recipes.exe
+✓ pages\mo_and_recipes.py
+✓ shared\ (carpeta con .py)
+✓ .streamlit\secrets.toml
+✓ credentials\ (carpeta con JSON)
+✓ config.py
+
+========================================
+SI ALGO FALLA:
+========================================
+
+Lee: GUIA_PASO_A_PASO_COMPLETA.txt
+
+========================================

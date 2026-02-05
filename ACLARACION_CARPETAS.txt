@@ -1,0 +1,58 @@
+========================================
+ACLARACION: ¿QUÉ CARPETA COPIAR?
+========================================
+
+ESTAS CARPETAS NO LAS NECESITAS:
+================================
+
+❌ build\mo_and_recipes\
+   - Esta carpeta contiene archivos TEMPORALES de PyInstaller
+   - Son archivos intermedios del proceso de compilación
+   - NO los necesitas para copiar a otra PC
+   - Puedes ignorarlos o eliminarlos
+
+❌ build\ (carpeta completa)
+   - Archivos temporales de compilación
+   - NO necesarios para ejecutar en otra PC
+
+
+ESTAS SON LAS CARPETAS IMPORTANTES:
+===================================
+
+✅ dist\mo_and_recipes.exe
+   - Este es el EJECUTABLE FINAL
+   - Este SÍ lo necesitas
+
+✅ dist\mo_and_recipes_completo\ (después de ejecutar el script)
+   - Esta es la carpeta COMPLETA lista para copiar
+   - Contiene el .exe + todos los archivos necesarios
+   - Esta es la que debes comprimir y copiar
+
+
+PASOS CORRECTOS:
+================
+
+1. El ejecutable está en: dist\mo_and_recipes.exe
+
+2. Ejecuta el script: PREPARAR_CARPETA_SIMPLE.bat
+   (Esto creará: dist\mo_and_recipes_completo\)
+
+3. La carpeta dist\mo_and_recipes_completo\ es la que debes copiar
+
+4. Esa carpeta tendrá:
+   - mo_and_recipes.exe
+   - pages\
+   - shared\
+   - .streamlit\
+   - credentials\
+   - config.py
+
+
+RESUMEN:
+========
+
+build\ = Archivos temporales (IGNORAR)
+dist\mo_and_recipes.exe = Ejecutable (IMPORTANTE)
+dist\mo_and_recipes_completo\ = Carpeta completa para copiar (CREAR CON SCRIPT)
+
+========================================
