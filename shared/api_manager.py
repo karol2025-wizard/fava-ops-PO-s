@@ -423,6 +423,19 @@ class APIManager:
             print(f"Error fetching item {item_code}: Status {response.status_code}, Response: {response.text}")
             return None
 
+    def update_item_shelf_life(self, article_id: int, shelf_life_days: int) -> bool:
+        """Update item's shelf life (expiry = production/receipt date + shelf_life days)"""
+        try:
+            response = requests.put(
+                f"{self.base_url}/items/{article_id}",
+                auth=self.auth,
+                headers={'content-type': 'application/json'},
+                json={'shelf_life': shelf_life_days}
+            )
+            return response.status_code in [200, 202, 204]
+        except Exception:
+            return False
+
     def create_manufacturing_order(self, item_code=None, article_id=None, quantity=None, assigned_id=1, start_date=None,
                                    custom_40604=None):
         """
@@ -455,6 +468,18 @@ class APIManager:
             article_id = item.get('article_id')
             if not article_id:
                 raise ValueError(f"No article_id found for item with code {item_code}. The item may not be properly configured in MRPEasy.")
+
+            # Ensure 7-day shelf life for dips (A1564, A1565, A1563)
+            DIPS_7_DAY = {'A1564', 'A1565', 'A1563'}
+            if item_code and item_code.strip().upper() in DIPS_7_DAY and item.get('shelf_life') != 7:
+                self.update_item_shelf_life(article_id, 7)
+
+        # When article_id passed with item_code, ensure 7-day shelf life for dips
+        DIPS_7_DAY = {'A1564', 'A1565', 'A1563'}
+        if item_code and article_id and item_code.strip().upper() in DIPS_7_DAY:
+            item = self.get_item_details(item_code.strip())
+            if item and item.get('shelf_life') != 7:
+                self.update_item_shelf_life(article_id, 7)
 
         # Ensure we have an article_id and quantity
         if not article_id:

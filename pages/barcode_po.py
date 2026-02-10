@@ -109,19 +109,31 @@ def get_lot_and_expiry(item_code: str, po_id: int, receiving_date: date) -> tupl
     lot_number = None
     expiry_date = None
 
+    # Normalize item code and detect 7‑day dips
+    dips_7_day = {'A1564', 'A1565', 'A1563'}
+    normalized_code = (item_code or '').strip().upper()
+
+    # Get item details from cache once
+    item = get_item_from_cache(item_code)
+    is_7_day_dip = normalized_code in dips_7_day
+
     # Get matching lots from cache
     matching_lots = get_lots_from_cache(item_code, po_id)
 
     if matching_lots:
         lot = matching_lots[0]
         lot_number = lot.get('code')
-        if lot.get('expiry'):
+        # For the 7‑day dips we want to ignore the expiry coming from MRPeasy
+        # and always calculate it as receiving_date + 7 days.
+        if lot.get('expiry') and not is_7_day_dip:
             expiry_date = datetime.fromtimestamp(lot['expiry']).strftime("%d/%m/%Y")
 
     if not expiry_date:
-        # Get item details from cache
-        item = get_item_from_cache(item_code)
-        if item and item.get('shelf_life'):
+        if is_7_day_dip:
+            # Force 7‑day shelf life for these dips, regardless of MRPeasy config
+            shelf_life = 7
+            expiry_date = (receiving_date + timedelta(days=shelf_life)).strftime("%d/%m/%Y")
+        elif item and item.get('shelf_life'):
             shelf_life = int(item['shelf_life'])
             expiry_date = (receiving_date + timedelta(days=shelf_life)).strftime("%d/%m/%Y")
         else:

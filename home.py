@@ -128,7 +128,6 @@ with col1:
     st.markdown("---")
 
 
-
 with col2:
     # Resource cards in a grid
     for i in range(0, len(sheets), 2):
@@ -149,5 +148,3 @@ with col2:
 # Display the image
 image_path = "media/sad-face-pictures.jpg"  # Replace with your actual file path
 st.image(image_path, caption="A Sad Face", use_container_width=True)
-
-

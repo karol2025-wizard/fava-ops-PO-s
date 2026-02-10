@@ -8,6 +8,8 @@ import tempfile
 import json
 from io import BytesIO
 
+import re
+
 from shared.api_manager import APIManager
 from shared.gdocs_manager import GDocsManager
 from config import secrets
@@ -25,6 +27,129 @@ import requests
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Translations for EN / AR (English / Arabic)
+TRANSLATIONS = {
+    'en': {
+        'page_title': 'MO and Recipes',
+        'page_subtitle': 'Create MOs and print recipes',
+        'select_action': 'Select Action',
+        'choose_action': 'Choose what you want to do:',
+        'print_recipe': 'Print Recipe',
+        'generate_mo': 'Generate MO',
+        'info_print_recipe': '**Print Recipe**: View and download recipe PDFs from Google Docs',
+        'info_generate_mo': '**Generate MO**: Create a Manufacturing Order and generate routing PDF',
+        'selected_action': 'Selected Action',
+        'change_action': 'Change Action',
+        'step2_category': 'Step 2: Select Category',
+        'refresh_data': 'Refresh Data',
+        'cache_cleared': 'Cache cleared! Reloading...',
+        'no_categories': 'No categories found. This might indicate:',
+        'items_loading': 'Items are still loading (check sidebar for cache status)',
+        'step3_item': 'Step 3: Select Item',
+        'category': 'Category',
+        'recipe_viewer': 'Recipe Viewer',
+        'selected_item': 'Selected Item',
+        'searching_pdf': 'Searching for recipe in PDF files...',
+        'loading_gdocs': 'Loading recipe from Google Docs...',
+        'recipe_from_zip': 'Recipe loaded from PDF ZIP file',
+        'recipe_from_gdocs': 'Recipe loaded from Google Docs',
+        'download_recipe_pdf': 'Download Recipe PDF',
+        'ingredients': 'Ingredients',
+        'instructions': 'Instructions',
+        'print_recipe_pdf': 'Print Recipe PDF',
+        'step4_create_mo': 'Step 4: Create Manufacturing Order',
+        'single_creation': 'Single Creation',
+        'batch_creation': 'Batch Creation',
+        'batch_subheader': 'Batch Order Creation',
+        'batch_info': 'Create Manufacturing Orders automatically with item code, expected output (estimate), and start date.',
+        'expected_output': 'Expected Output (Estimate)',
+        'expected_output_help': 'Enter the estimated quantity for planning purposes. Actual produced quantity will be captured from the Lot App.',
+        'info_expected_output': '**Expected Output** is an **estimate** used for planning. Actual produced quantity will be captured later from the Lot App.',
+        'unit': 'Unit',
+        'create_mo': 'Create Manufacturing Order',
+        'item_code': 'Item Code',
+        'start_date': 'Start Date (MM/DD/YYYY)',
+        'print': 'Print',
+        'pdf_preview': 'PDF Preview',
+        'start_over': 'Start Over',
+        'recipe_not_found': 'Recipe not found for item',
+        'recipe_sources_not_configured': 'Recipe sources not configured.',
+        'mo_created_success': 'Manufacturing Order created successfully!',
+        'routing_pdf_success': 'Routing PDF Generated Successfully!',
+        'please_enter_quantity': 'Please enter a quantity greater than 0',
+        'creating_mo': 'Creating Manufacturing Order...',
+        'generating_routing': 'Generating routing PDF...',
+        'recipe_summary': 'Recipe Summary',
+        'ingredients_col': 'INGREDIENTS',
+        'quantity_col': 'QUANTITY',
+        'expected_output_label': 'Expected Output',
+        'lot_code': 'Lot Code',
+    },
+    'ar': {
+        'page_title': 'أوامر التصنيع والوصفات',
+        'page_subtitle': 'إنشاء أوامر التصنيع وطباعة الوصفات',
+        'select_action': 'اختر الإجراء',
+        'choose_action': 'ماذا تريد أن تفعل؟',
+        'print_recipe': 'طباعة الوصفة',
+        'generate_mo': 'إنشاء أمر تصنيع',
+        'info_print_recipe': '**طباعة الوصفة**: عرض وتحميل ملفات PDF للوصفات',
+        'info_generate_mo': '**إنشاء أمر تصنيع**: إنشاء أمر تصنيع وتوليد PDF المسار',
+        'selected_action': 'الإجراء المحدد',
+        'change_action': 'تغيير الإجراء',
+        'step2_category': 'الخطوة 2: اختر الفئة',
+        'refresh_data': 'تحديث البيانات',
+        'cache_cleared': 'تم مسح الذاكرة المؤقتة! جاري إعادة التحميل...',
+        'no_categories': 'لم يتم العثور على فئات. قد يشير ذلك إلى:',
+        'items_loading': 'جاري تحميل العناصر',
+        'step3_item': 'الخطوة 3: اختر العنصر',
+        'category': 'الفئة',
+        'recipe_viewer': 'عرض الوصفات',
+        'selected_item': 'العنصر المحدد',
+        'searching_pdf': 'جاري البحث عن الوصفة في ملفات PDF...',
+        'loading_gdocs': 'جاري التحميل من Google Docs...',
+        'recipe_from_zip': 'تم تحميل الوصفة من ملف ZIP PDF',
+        'recipe_from_gdocs': 'تم تحميل الوصفة من Google Docs',
+        'download_recipe_pdf': 'تحميل PDF الوصفة',
+        'ingredients': 'المكونات',
+        'instructions': 'التعليمات',
+        'print_recipe_pdf': 'طباعة PDF الوصفة',
+        'step4_create_mo': 'الخطوة 4: إنشاء أمر التصنيع',
+        'single_creation': 'إنشاء فردي',
+        'batch_creation': 'إنشاء دفعة',
+        'batch_subheader': 'إنشاء أوامر الدفعة',
+        'batch_info': 'إنشاء أوامر التصنيع تلقائياً مع رمز العنصر والكمية المتوقعة وتاريخ البدء.',
+        'expected_output': 'الكمية المتوقعة (تقدير)',
+        'expected_output_help': 'أدخل الكمية المقدرة للتخطيط. سيتم تسجيل الكمية الفعلية من تطبيق الدفعة.',
+        'info_expected_output': '**الكمية المتوقعة** هي **تقدير** للتخطيط. سيتم تسجيل الكمية الفعلية لاحقاً من تطبيق الدفعة.',
+        'unit': 'الوحدة',
+        'create_mo': 'إنشاء أمر التصنيع',
+        'item_code': 'رمز العنصر',
+        'start_date': 'تاريخ البدء (شهر/يوم/سنة)',
+        'print': 'طباعة',
+        'pdf_preview': 'معاينة PDF',
+        'start_over': 'ابدأ من جديد',
+        'recipe_not_found': 'لم يتم العثور على الوصفة للعنصر',
+        'recipe_sources_not_configured': 'مصادر الوصفات غير مهيأة.',
+        'mo_created_success': 'تم إنشاء أمر التصنيع بنجاح!',
+        'routing_pdf_success': 'تم توليد PDF المسار بنجاح!',
+        'please_enter_quantity': 'يرجى إدخال كمية أكبر من 0',
+        'creating_mo': 'جاري إنشاء أمر التصنيع...',
+        'generating_routing': 'جاري توليد PDF المسار...',
+        'recipe_summary': 'ملخص الوصفة',
+        'ingredients_col': 'المكونات',
+        'quantity_col': 'الكمية',
+        'expected_output_label': 'الكمية المتوقعة',
+        'lot_code': 'رمز الدفعة',
+    },
+}
+
+
+def t(key: str) -> str:
+    """Return translated string for current locale. Fallback to 'en' if key missing."""
+    locale = st.session_state.get('locale', 'en')
+    d = TRANSLATIONS.get(locale, TRANSLATIONS['en'])
+    return d.get(key, TRANSLATIONS['en'].get(key, key))
 
 
 class BarCode128(Flowable):
@@ -192,6 +317,10 @@ def initialize_session_state():
         st.session_state.routing_pdf_file = None
     if 'routing_pdf_bytes' not in st.session_state:
         st.session_state.routing_pdf_bytes = None
+    
+    # Language (en / fr)
+    if 'locale' not in st.session_state:
+        st.session_state.locale = 'en'
 
 
 def sync_legacy_states():
@@ -308,15 +437,15 @@ CATEGORY_ICONS = {
 PROFESSIONAL_CATEGORIES = {
     'Bases & Preparations': {
         'keywords': ['base', 'stock', 'syrup', 'cornstarch', 'eggplant grilled', 'chickpea cooked for garnish', 'beet steamed'],
-        'item_codes': ['A1635', 'A1634', 'A1600', 'A1646', 'A1616', 'A1650', 'A1176', 'A1315', 'A1233', 'A1615', 'A1649']
+        'item_codes': ['A1635', 'A1634', 'A1600', 'A1616', 'A1176', 'A1315', 'A1233', 'A1615', 'A1649', 'A1011', 'A00570']
     },
     'Dips & Sauces': {
-        'keywords': ['hummus', 'mutabbal', 'mouhammara', 'tarator', 'mayo', 'yogourt', 'yogurt', 'sauce', 'marinade', 'terbyelli', 'confit tomatoes', 'labneh', 'tajin'],
-        'item_codes': ['A1564', 'A1563', 'A1566', 'A1565', 'A1545', 'A1550', 'A1544', 'A1549', 'A1280', 'A1871', 'A1612', 'A1575', 'A1049', 'A1452', 'A1720', 'A1640', 'A1551', 'A1553', 'A1026', 'A1641']
+        'keywords': ['hummus', 'mutabbal', 'mouhammara', 'tarator', 'mayo', 'yogourt', 'yogurt', 'sauce', 'marinade', 'terbyelli', 'confit tomatoes', 'labneh', 'tajin', 'dressing', 'menemen'],
+        'item_codes': ['A1564', 'A1563', 'A1566', 'A1565', 'A1545', 'A1550', 'A1544', 'A1549', 'A1280', 'A1871', 'A1612', 'A1575', 'A1049', 'A1452', 'A1720', 'A1640', 'A1551', 'A1553', 'A1646', 'A1650', 'A1641', 'A00571', 'A00589']
     },
     'Cooked Proteins': {
         'keywords': ['cooked', 'sous vide', 'grilled', 'steamed'],
-        'item_codes': ['A1619', 'A1861', 'A1574', 'A1490', 'A1942', 'A1903']
+        'item_codes': ['A1619', 'A1861', 'A1574', 'A1490', 'A1942', 'A1903', 'A1639', 'A00577']
     },
     'Raw & Marinated Proteins': {
         'keywords': ['raw', 'marinated', 'kawarma', 'ground'],
@@ -328,7 +457,7 @@ PROFESSIONAL_CATEGORIES = {
     },
     'Desserts': {
         'keywords': ['ice cream', 'cookie', 'kunafa', 'safarjal', 'baklava', 'halva'],
-        'item_codes': ['A1017', 'A1015', 'A1604', 'A1633', 'A1935', 'A1925']
+        'item_codes': ['A1017', 'A1015', 'A1604', 'A1633', 'A1935', 'A1925', 'A00558']
     },
     'Bread & Dough': {
         'keywords': ['bread', 'dough'],
@@ -336,7 +465,7 @@ PROFESSIONAL_CATEGORIES = {
     },
     'Kits': {
         'keywords': ['kit', 'marinated cucumbers', 'falafel not cooked frozen', 'fried pita'],
-        'item_codes': ['A1689', 'A1684', 'A1685', 'A1686', 'A1688', 'A1737', 'A1629', 'A1385']
+        'item_codes': ['A1689', 'A1684', 'A1685', 'A1686', 'A1688', 'A1737', 'A1629', 'A1385', 'A1026']
     },
     'Frozen Products': {
         'keywords': ['frozen'],
@@ -364,11 +493,12 @@ def get_professional_category(item: Dict) -> str:
         str: Professional category name
     """
     title = (item.get('title', '') or '').lower()
-    code = item.get('code', '')
+    code = (item.get('code', '') or '').strip().upper()
     
     # First check by item code (most reliable)
     for category, data in PROFESSIONAL_CATEGORIES.items():
-        if code in data.get('item_codes', []):
+        codes = [c.strip().upper() for c in data.get('item_codes', []) if c]
+        if code and code in codes:
             return category
     
     # Then check by keywords in title (order matters - check more specific first)
@@ -644,6 +774,7 @@ def create_mo_batch(api: APIManager, item_code: str, quantity: float, start_date
         if article_id:
             response = api.create_manufacturing_order(
                 article_id=article_id,
+                item_code=item_code.strip(),
                 quantity=float(quantity),
                 assigned_id=1,
                 start_date=start_date_timestamp
@@ -1243,7 +1374,13 @@ def generate_recipe_pdf_from_gdocs(recipe_data, item_code, item_title):
     return pdf_filename
 
 
-def generate_mo_recipe_pdf(mo_data, mo_full_data, items_cache, units_cache):
+def _pdf_t(key: str, locale: str = 'en') -> str:
+    """Get translated string for PDF (no session state)."""
+    d = TRANSLATIONS.get(locale, TRANSLATIONS['en'])
+    return d.get(key, TRANSLATIONS['en'].get(key, key))
+
+
+def generate_mo_recipe_pdf(mo_data, mo_full_data, items_cache, units_cache, locale: str = 'en'):
     """Generate PDF from MO data with BOM summary and operations"""
     # Create a temporary file for the PDF
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
@@ -1310,10 +1447,29 @@ def generate_mo_recipe_pdf(mo_data, mo_full_data, items_cache, units_cache):
     title = Paragraph(mo_data.get('item_title', 'Recipe'), title_style)
     elements.append(title)
     
+    # Add MO number and date (e.g. MO07134  Wed Feb 11 2026)
+    mo_code = mo_data.get('code', '')
+    start_ts = mo_data.get('start_date')
+    date_str = ''
+    if start_ts:
+        try:
+            from datetime import datetime
+            dt = datetime.fromtimestamp(float(start_ts))
+            date_str = dt.strftime('%a %b %d %Y')  # Wed Feb 11 2026
+        except (ValueError, TypeError):
+            pass
+    if mo_code or date_str:
+        mo_date_style = ParagraphStyle(
+            'MODate', parent=subtitle_style, fontSize=11, textColor=colors.HexColor('#4B5563')
+        )
+        mo_line = f"<b>{mo_code}</b>    {date_str}" if (mo_code and date_str) else (mo_code or date_str)
+        elements.append(Paragraph(mo_line, mo_date_style))
+        elements.append(Spacer(1, 0.08*inch))
+    
     # Add expected output
     quantity = mo_data.get('quantity', 0)
     unit = mo_data.get('unit', '')
-    expected_output = Paragraph(f'Expected Output: {quantity} {unit}', subtitle_style)
+    expected_output = Paragraph(f"{_pdf_t('expected_output_label', locale)}: {quantity} {unit}", subtitle_style)
     elements.append(expected_output)
     elements.append(Spacer(1, 0.1*inch))
     
@@ -1321,7 +1477,7 @@ def generate_mo_recipe_pdf(mo_data, mo_full_data, items_cache, units_cache):
     lot_code = mo_data.get('lot_code')
     if lot_code:
         # Create a centered table for lot code and barcode
-        lot_code_para = Paragraph(f'<b>Lot Code: {lot_code}</b>', subtitle_style)
+        lot_code_para = Paragraph(f"<b>{_pdf_t('lot_code', locale)}: {lot_code}</b>", subtitle_style)
         lot_barcode = BarCode128(lot_code, width=2.5*inch, height=0.5*inch)
         
         # Create table to center the barcode
@@ -1338,15 +1494,14 @@ def generate_mo_recipe_pdf(mo_data, mo_full_data, items_cache, units_cache):
         elements.append(Spacer(1, 0.2*inch))
     
     # Add Recipe Summary section
-    recipe_summary_title = Paragraph('Recipe Summary', section_header_style)
+    recipe_summary_title = Paragraph(_pdf_t('recipe_summary', locale), section_header_style)
     elements.append(recipe_summary_title)
     
-    # Build BOM summary table
+    # Build BOM summary table (quantity + unit combined in one column)
     bom_table_data = []
     bom_header_row = [
-        Paragraph('INGREDIENTS', header_style),
-        Paragraph('QUANTITY', header_style),
-        Paragraph('UNIT', header_style)
+        Paragraph(_pdf_t('ingredients_col', locale), header_style),
+        Paragraph(_pdf_t('quantity_col', locale), header_style)
     ]
     bom_table_data.append(bom_header_row)
     
@@ -1363,18 +1518,18 @@ def generate_mo_recipe_pdf(mo_data, mo_full_data, items_cache, units_cache):
             unit_id = item.get('unit_id')
             unit = get_unit_by_id(unit_id, units_cache)
             
-            # Format quantity
+            # Format quantity with unit (e.g. "0.9 kg", "45 gr")
             qty_display = f"{booked:.2f}".rstrip('0').rstrip('.')
+            qty_with_unit = f"{qty_display} {unit}" if unit else qty_display
             
             row = [
                 Paragraph(item_title, cell_style),
-                Paragraph(qty_display, cell_style),
-                Paragraph(unit, cell_style)
+                Paragraph(qty_with_unit, cell_style)
             ]
             bom_table_data.append(row)
     
     # Create BOM table
-    bom_col_widths = [4.5*inch, 1.5*inch, 1.5*inch]
+    bom_col_widths = [5*inch, 2*inch]
     bom_table = Table(bom_table_data, colWidths=bom_col_widths, repeatRows=1)
     
     # Style the BOM table
@@ -1411,11 +1566,8 @@ def generate_mo_recipe_pdf(mo_data, mo_full_data, items_cache, units_cache):
     elements.append(bom_table)
     elements.append(Spacer(1, 0.3*inch))
     
-    # Add Operations/Routing section
-    # Prepare operations table data
+    # Add Operations/Routing section (when operations exist)
     table_data = []
-    
-    # Header row
     header_row = [
         Paragraph('STEP', header_style),
         Paragraph('INGREDIENTS', header_style),
@@ -1424,7 +1576,6 @@ def generate_mo_recipe_pdf(mo_data, mo_full_data, items_cache, units_cache):
     ]
     table_data.append(header_row)
     
-    # Process operations
     operations = mo_full_data.get('operations', [])
     temp_image_files = []  # Keep track of temp files to clean up
     
@@ -1488,41 +1639,36 @@ def generate_mo_recipe_pdf(mo_data, mo_full_data, items_cache, units_cache):
         ]
         table_data.append(row)
     
-    # Create operations table
-    col_widths = [1.2*inch, 2.2*inch, 2.8*inch, 1.3*inch]
-    operations_table = Table(table_data, colWidths=col_widths, repeatRows=1)
-    
-    # Style the operations table
-    operations_table_style = TableStyle([
-        # Header styling
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 10),
-        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
-        
-        # Body styling
-        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-        ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 1), (-1, -1), 9),
-        ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
-        ('VALIGN', (0, 1), (-1, -1), 'TOP'),
-        
-        # Grid
-        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ('LINEBELOW', (0, 0), (-1, 0), 2, colors.black),
-        
-        # Padding
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ('LEFTPADDING', (0, 0), (-1, -1), 6),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-    ])
-    
-    operations_table.setStyle(operations_table_style)
-    elements.append(operations_table)
+    # Only add operations table when we have operation rows (not just header)
+    if len(table_data) > 1:
+        col_widths = [1.2*inch, 2.2*inch, 2.8*inch, 1.3*inch]
+        operations_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        operations_table_style = TableStyle([
+            # Header styling
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
+            # Body styling
+            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 1), (-1, -1), 'TOP'),
+            # Grid
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('LINEBELOW', (0, 0), (-1, 0), 2, colors.black),
+            # Padding
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ])
+        operations_table.setStyle(operations_table_style)
+        elements.append(operations_table)
     
     # Build PDF
     doc.build(elements)
@@ -1582,14 +1728,27 @@ def main():
     </style>
     <div class="mo-recipes-header">
         <div class="mo-recipes-logo">🏭📋</div>
-        <h1 class="mo-recipes-title">MO and Recipes</h1>
+        <h1 class="mo-recipes-title">""" + t("page_title") + """</h1>
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown('<p class="mo-recipes-subtitle">Create MOs and print recipes</p>', unsafe_allow_html=True)
-
-    # Initialize session state
+    # Initialize session state (must be before t() and language selector)
     initialize_session_state()
+    
+    # Language selector in sidebar
+    with st.sidebar:
+        st.markdown("**Language / اللغة**")
+        lang_col1, lang_col2 = st.columns(2)
+        with lang_col1:
+            if st.button("EN", key="lang_en", use_container_width=True, type="primary" if st.session_state.get('locale') == 'en' else "secondary"):
+                st.session_state.locale = 'en'
+                st.rerun()
+        with lang_col2:
+            if st.button("عربي", key="lang_ar", use_container_width=True, type="primary" if st.session_state.get('locale') == 'ar' else "secondary"):
+                st.session_state.locale = 'ar'
+                st.rerun()
+    
+    st.markdown(f'<p class="mo-recipes-subtitle">{t("page_subtitle")}</p>', unsafe_allow_html=True)
     
     # Sync legacy states with new state machine
     sync_legacy_states()
@@ -1624,8 +1783,8 @@ def main():
             cache_info['units_loaded'] = True
             cache_info['last_updated'] = datetime.now()
 
-    # Display cache status in sidebar
-    display_cache_status(all_items, all_units)
+    # Cache status in sidebar hidden for workers (simplified UI)
+    # display_cache_status(all_items, all_units)
     
     # Filter items where is_raw = false
     filtered_items = [item for item in all_items if item.get('is_raw') == False]
@@ -1636,8 +1795,8 @@ def main():
         'A1233', 'A1635', 'A1631', 'A1619', 'A1861', 'A1639', 'A1574', 'A1490', 
         'A1315', 'A1600', 'A1646', 'A1011', 'A1691', 'A1176', 'A1696', 'A1903', 
         'A1640', 'A1615', 'A1650', 'A1634', 'A1693', 'A1942', 'A1641',
-        # ALEJANDRO TEAM
-        'A1564', 'A1575', 'A1616', 'A1565', 'A1871', 'A1563', 'A1550', 'A1545', 
+        # ALEJANDRO TEAM (Dips & Sauces)
+        'A1564', 'A1563', 'A1566', 'A1565', 'A1575', 'A1616', 'A1871', 'A1550', 'A1545', 
         'A1280', 'A1544', 'A1549', 'A1612', 'A1649',
         # ASSEMBLY TEAM
         'A1689', 'A1737', 'A1629', 'A1684', 'A1688', 'A1685', 'A1026', 'A1686', 
@@ -1655,7 +1814,9 @@ def main():
         'A1697', 'A1653', 'A1694', 'A1551', 'A1049', 'A1452', 'A1698', 'A1643', 
         'A1690', 'A1720', 'A1692',
         # BREAD TEAM
-        'A1558', 'A1561'
+        'A1558', 'A1561',
+        # NEW / OTHER (added from production list)
+        'A00571', 'A00589', 'A00570', 'A00577', 'A00558'
     }
     
     # Filter to only show allowed item codes
@@ -1673,15 +1834,15 @@ def main():
     # Show action selection if not already selected
     if st.session_state.action_selected is None:
         st.markdown('<div style="margin: 30px 0;"></div>', unsafe_allow_html=True)
-        st.header("🎯 Select Action")
-        st.markdown("Choose what you want to do:")
+        st.header("🎯 " + t("select_action"))
+        st.markdown(t("choose_action"))
         
         # Create two columns for action buttons
         col1, col2 = st.columns(2)
         
         with col1:
             if st.button(
-                "📋 Print Recipe",
+                "📋 " + t("print_recipe"),
                 key="action_print_recipe",
                 use_container_width=True,
                 type="primary"
@@ -1691,7 +1852,7 @@ def main():
         
         with col2:
             if st.button(
-                "🏭 Generate MO",
+                "🏭 " + t("generate_mo"),
                 key="action_generate_mo",
                 use_container_width=True,
                 type="primary"
@@ -1700,7 +1861,7 @@ def main():
                 st.rerun()
         
         st.markdown('<div style="margin: 40px 0;"></div>', unsafe_allow_html=True)
-        st.info("💡 **Print Recipe**: View and download recipe PDFs from Google Docs\n\n🏭 **Generate MO**: Create a Manufacturing Order and generate routing PDF")
+        st.info("💡 " + t("info_print_recipe") + "\n\n🏭 " + t("info_generate_mo"))
         
         # Stop here if no action selected
         return
@@ -1710,11 +1871,11 @@ def main():
     # ============================================
     
     # Show selected action info
-    action_display = "📋 Print Recipe" if st.session_state.action_selected == 'recipe' else "🏭 Generate MO"
-    st.info(f"**Selected Action:** {action_display}")
+    action_display = "📋 " + t("print_recipe") if st.session_state.action_selected == 'recipe' else "🏭 " + t("generate_mo")
+    st.info(f"**{t('selected_action')}:** {action_display}")
     
     # Back button to change action
-    if st.button("← Change Action", key="back_to_action_selection"):
+    if st.button("← " + t("change_action"), key="back_to_action_selection"):
         st.session_state.action_selected = None
         reset_state_machine()
         st.rerun()
@@ -1724,16 +1885,16 @@ def main():
     # ============================================
     # STEP 2: SELECT CATEGORY (from ERP Quick MO Creator)
     # ============================================
-    st.header("Step 2: Select Category")
+    st.header(t("step2_category"))
     
     # Add refresh button next to header
     col1, col2 = st.columns([3, 1])
     with col1:
         pass  # Header is already shown above
     with col2:
-        if st.button("🔄 Refresh Data", help="Clear cache and reload items from API"):
+        if st.button("🔄 " + t("refresh_data"), help="Clear cache and reload items from API"):
             clear_all_caches()
-            st.success("Cache cleared! Reloading...")
+            st.success(t("cache_cleared"))
             st.rerun()
     
     # Extract unique professional categories from all filtered items
@@ -1820,10 +1981,10 @@ def main():
     # ============================================
     if st.session_state.category_selected:
         st.divider()
-        st.header("Step 3: Select Item")
+        st.header(t("step3_item"))
         # Get icon for selected category
         selected_icon = CATEGORY_ICONS.get(st.session_state.category_selected, '📋')
-        st.info(f"**Category:** {selected_icon} {st.session_state.category_selected}")
+        st.info(f"**{t('category')}:** {selected_icon} {st.session_state.category_selected}")
         
         # Filter items by selected professional category
         category_items = [
@@ -1871,8 +2032,8 @@ def main():
         # ============================================
         if st.session_state.action_selected == 'recipe':
             st.divider()
-            st.header("📋 Recipe Viewer")
-            st.success(f"**Selected Item:** {selected_item.get('title')} ({selected_item.get('code')})")
+            st.header("📋 " + t("recipe_viewer"))
+            st.success(f"**{t('selected_item')}:** {selected_item.get('title')} ({selected_item.get('code')})")
             
             # Get Google Docs configuration
             # Try st.secrets first (Streamlit native), then fallback to config.py secrets
@@ -1894,7 +2055,7 @@ def main():
                 recipe_source = None
                 
                 # First, try to find recipe in ZIP file
-                with st.spinner("Searching for recipe in PDF files..."):
+                with st.spinner(t("searching_pdf")):
                     recipe_pdf = find_recipe_pdf_from_zip(
                         selected_item.get('code'),
                         selected_item.get('title')
@@ -1905,7 +2066,7 @@ def main():
                 
                 # If not found in ZIP, try Google Docs
                 if not recipe and use_google_docs_recipes and recipes_doc_url:
-                    with st.spinner("Loading recipe from Google Docs..."):
+                    with st.spinner(t("loading_gdocs")):
                         recipe_gdocs = find_recipe_by_item_code(
                             selected_item.get('code'),
                             selected_item.get('title'),
@@ -2055,9 +2216,9 @@ def main():
                 
                 # Display source indicator
                 if recipe_source == 'zip':
-                    st.info("📦 Recipe loaded from PDF ZIP file")
+                    st.info("📦 " + t("recipe_from_zip"))
                 elif recipe_source == 'gdocs':
-                    st.info("📄 Recipe loaded from Google Docs")
+                    st.info("📄 " + t("recipe_from_gdocs"))
                 
                 # Handle PDF recipe
                 if recipe.get('type') == 'pdf':
@@ -2094,7 +2255,7 @@ def main():
                         
                         # Download button
                         st.download_button(
-                            label="📥 Download Recipe PDF",
+                            label="📥 " + t("download_recipe_pdf"),
                             data=pdf_data,
                             file_name=f"recipe_{filename_code}_{filename_name.replace(' ', '_')}.pdf",
                             mime="application/pdf",
@@ -2110,13 +2271,13 @@ def main():
                     
                     # Ingredients section
                     if recipe_data.get('ingredients'):
-                        st.subheader("📝 Ingredients")
+                        st.subheader("📝 " + t("ingredients"))
                         for ingredient in recipe_data['ingredients']:
                             st.write(f"• {ingredient}")
                     
                     # Instructions section
                     if recipe_data.get('instructions'):
-                        st.subheader("📋 Instructions")
+                        st.subheader("📋 " + t("instructions"))
                         for i, instruction in enumerate(recipe_data['instructions'], 1):
                             st.write(f"{i}. {instruction}")
                     
@@ -2131,7 +2292,7 @@ def main():
                     # Print Recipe Button
                     col1, col2, col3 = st.columns([1, 2, 1])
                     with col2:
-                        if st.button("🖨️ Print Recipe PDF", type="primary", use_container_width=True, key="print_recipe_viewer"):
+                        if st.button("🖨️ " + t("print_recipe_pdf"), type="primary", use_container_width=True, key="print_recipe_viewer"):
                             with st.spinner("Generating recipe PDF..."):
                                 try:
                                     pdf_file = generate_recipe_pdf_from_gdocs(
@@ -2143,7 +2304,7 @@ def main():
                                     with open(pdf_file, 'rb') as f:
                                         pdf_bytes = f.read()
                                         st.download_button(
-                                            label="📥 Download Recipe PDF",
+                                            label="📥 " + t("download_recipe_pdf"),
                                             data=pdf_bytes,
                                             file_name=f"{selected_item.get('code')}_recipe.pdf",
                                             mime="application/pdf",
@@ -2166,11 +2327,11 @@ def main():
         # ============================================
         elif st.session_state.action_selected == 'mo':
             st.divider()
-            st.header("Step 4: Create Manufacturing Order")
-            st.success(f"**Selected Item:** {selected_item.get('title')} ({selected_item.get('code')})")
+            st.header(t("step4_create_mo"))
+            st.success(f"**{t('selected_item')}:** {selected_item.get('title')} ({selected_item.get('code')})")
             
             # Create tabs for Single and Batch creation
-            tab1, tab2 = st.tabs(["📝 Single Creation", "⚡ Batch Creation"])
+            tab1, tab2 = st.tabs(["📝 " + t("single_creation"), "⚡ " + t("batch_creation")])
             
             # ============================================
             # TAB 1: SINGLE CREATION (existing flow)
@@ -2181,27 +2342,27 @@ def main():
                 unit_name = get_unit_by_id(unit_id, all_units)
                 
                 # Expected Output (Estimate) input
-                st.info("💡 **Expected Output** is an **estimate** used for planning (ingredients, routing). Actual produced quantity will be captured later from the Lot App.")
+                st.info("💡 " + t("info_expected_output"))
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     quantity = st.number_input(
-                        f"Expected Output (Estimate) ({unit_name})",
+                        f"{t('expected_output')} ({unit_name})",
                         min_value=0.0,
                         step=1.0,
                         format="%.2f",
                         value=1.0,
-                        help="Enter the estimated quantity for planning purposes. This will be used to calculate ingredients and generate routing. Actual produced quantity will be captured from the Lot App.",
+                        help=t("expected_output_help"),
                         key="quantity_input"
                     )
                 with col2:
-                    st.metric("Unit", unit_name)
+                    st.metric(t("unit"), unit_name)
                 
                 # Submit button
-                if st.button("🚀 Create Manufacturing Order", type="primary", use_container_width=True, key="create_mo_single"):
+                if st.button("🚀 " + t("create_mo"), type="primary", use_container_width=True, key="create_mo_single"):
                     if quantity <= 0:
-                        st.error("Please enter a quantity greater than 0")
+                        st.error(t("please_enter_quantity"))
                     else:
-                        with st.spinner("Creating Manufacturing Order..."):
+                        with st.spinner(t("creating_mo")):
                             try:
                                 # Get current date as Unix timestamp
                                 current_date = int(datetime.now().timestamp())
@@ -2215,6 +2376,7 @@ def main():
                                 
                                 response = api.create_manufacturing_order(
                                     article_id=article_id,
+                                    item_code=selected_item.get('code'),
                                     quantity=float(quantity),
                                     assigned_id=1,
                                     start_date=current_date
@@ -2239,10 +2401,10 @@ def main():
                                     st.session_state.created_mo_id = mo_id
                                     st.session_state.mo_number = mo_id  # Sync with state machine
                                     
-                                    st.success(f"✅ Manufacturing Order created successfully! (ID: {mo_id})")
+                                    st.success(f"✅ {t('mo_created_success')} (ID: {mo_id})")
                                     
                                     # Now generate the PDF
-                                    with st.spinner("Generating routing PDF..."):
+                                    with st.spinner(t("generating_routing")):
                                         # Fetch the MO data (contains both basic and detailed info)
                                         mo_data = api.get_manufacturing_order_details(mo_id)
                                         
@@ -2254,25 +2416,18 @@ def main():
                                                 mo_data, 
                                                 mo_data, 
                                                 all_items,
-                                                all_units
+                                                all_units,
+                                                locale=st.session_state.get('locale', 'en')
                                             )
                                             
                                             st.session_state.show_routing = True  # Set routing state
-                                            st.success("🎉 Routing PDF Generated Successfully!")
-                                            
-                                            # Provide download button
+                                            st.session_state.routing_pdf_file = pdf_file  # So PDF preview shows
                                             with open(pdf_file, 'rb') as f:
                                                 pdf_bytes = f.read()
-                                                st.download_button(
-                                                    label="📥 Download Routing PDF",
-                                                    data=pdf_bytes,
-                                                    file_name=f"{selected_item.get('code')}_{mo_code}_routing.pdf",
-                                                    mime="application/pdf",
-                                                    type="primary",
-                                                    use_container_width=True
-                                                )
+                                            st.session_state.routing_pdf_bytes = pdf_bytes  # So PDF preview shows for all items
+                                            st.success("🎉 " + t("routing_pdf_success"))
                                             
-                                            # Clean up temp file
+                                            # Clean up temp file (preview uses routing_pdf_bytes)
                                             try:
                                                 os.unlink(pdf_file)
                                             except:
@@ -2290,8 +2445,8 @@ def main():
             # TAB 2: BATCH CREATION (automatic MO creation)
             # ============================================
             with tab2:
-                st.subheader("⚡ Batch Order Creation")
-                st.info("Create Manufacturing Orders automatically with item code, expected output (estimate), and start date.")
+                st.subheader("⚡ " + t("batch_subheader"))
+                st.info(t("batch_info"))
                 
                 # Form for batch creation
                 with st.form("batch_order_form", clear_on_submit=False):
@@ -2301,7 +2456,7 @@ def main():
                         # Item code input (auto-filled if item is selected)
                         default_item_code = selected_item.get('code', '') if selected_item else ''
                         item_code_input = st.text_input(
-                            "Item Code *",
+                            t("item_code") + " *",
                             value=default_item_code,
                             placeholder="e.g., A1234",
                             help="Enter the item code for the Manufacturing Order"
@@ -2310,26 +2465,26 @@ def main():
                     with col2:
                         # Expected Output (Estimate) input
                         quantity_input = st.number_input(
-                            "Expected Output (Estimate) *",
+                            t("expected_output") + " *",
                             min_value=0.0,
                             step=1.0,
                             format="%.2f",
                             value=1.0,
-                            help="Enter the estimated quantity for planning purposes. This will be used to calculate ingredients and generate routing. Actual produced quantity will be captured from the Lot App."
+                            help=t("expected_output_help")
                         )
                     
                     # Start date input
                     today = datetime.now()
                     default_date = today.strftime("%m/%d/%Y")
                     start_date_input = st.text_input(
-                        "Start Date (MM/DD/YYYY) *",
+                        t("start_date") + " *",
                         value=default_date,
                         placeholder="MM/DD/YYYY",
                         help="Enter the start date in MM/DD/YYYY format"
                     )
                     
                     # Submit button
-                    submitted = st.form_submit_button("🚀 Create Manufacturing Order", type="primary", use_container_width=True)
+                    submitted = st.form_submit_button("🚀 " + t("create_mo"), type="primary", use_container_width=True)
                     
                     if submitted:
                         # Validate and create MO
@@ -2355,12 +2510,10 @@ def main():
                             st.error(f"❌ {message}")
         
         # ============================================
-        # ROUTING PDF GENERATOR (only if mo_number exists)
+        # ROUTING PDF GENERATOR (only if mo_number exists) - title hidden for workers
         # ============================================
         if st.session_state.mo_number:
             st.divider()
-            st.header("📄 Routing PDF Generator")
-            
             mo_id = st.session_state.mo_number
             
             # Initialize MO data cache in session state if not exists
@@ -2379,125 +2532,77 @@ def main():
                         st.session_state.routing_mo_data = None
                         st.session_state.routing_mo_full_data = None
             
-            # Display MO summary and PDF generation if data is available
+            # Display PDF generation if data is available (summary hidden for simplicity)
             if st.session_state.get('routing_mo_data'):
                 # Use the same data object for both mo_data and mo_full_data
                 # since get_manufacturing_order_details returns complete data
                 mo_data = st.session_state.routing_mo_data
                 mo_full_data = st.session_state.routing_mo_full_data
                 
-                # Display MO Summary
-                st.subheader("Manufacturing Order Summary")
-                col1, col2, col3 = st.columns(3)
+                # If user clicked the green "Print" link (?generate_routing_pdf=1), generate PDF and rerun without param
+                if st.query_params.get("generate_routing_pdf") == "1":
+                    with st.spinner("Generating Routing PDF..."):
+                        try:
+                            pdf_file = generate_mo_recipe_pdf(
+                                mo_data,
+                                mo_full_data,
+                                all_items,
+                                all_units,
+                                locale=st.session_state.get('locale', 'en')
+                            )
+                            st.session_state.routing_pdf_file = pdf_file
+                            st.session_state.show_routing = True
+                            with open(pdf_file, 'rb') as f:
+                                st.session_state.routing_pdf_bytes = f.read()
+                            # Clear query param and rerun so URL is clean
+                            if "generate_routing_pdf" in st.query_params:
+                                del st.query_params["generate_routing_pdf"]
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ An error occurred while generating the PDF: {str(e)}")
+                            logger.error(f"Error generating routing PDF: {e}")
+                            st.exception(e)
                 
-                with col1:
-                    st.metric("MO ID", mo_id)
-                    st.metric("MO Code", mo_data.get('code', 'N/A'))
-                    st.metric("Item", mo_data.get('item_title', 'N/A'))
+                # Print button hidden - PDF appears automatically when MO is created
+                # Only show Print when PDF not yet generated (e.g. from Batch creation flow)
+                if not (st.session_state.get('routing_pdf_bytes') and st.session_state.get('show_routing')):
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        st.markdown("""
+                        <a href="?generate_routing_pdf=1" target="_self" style="
+                            display: inline-block;
+                            width: 100%;
+                            text-align: center;
+                            background-color: #16a34a;
+                            color: white !important;
+                            padding: 1rem 2rem;
+                            font-size: 1.35rem;
+                            font-weight: 600;
+                            min-height: 3.5rem;
+                            line-height: 1.4;
+                            border-radius: 0.5rem;
+                            border: none;
+                            text-decoration: none;
+                            box-sizing: border-box;
+                        " onmouseover="this.style.backgroundColor='#15803d'" onmouseout="this.style.backgroundColor='#16a34a'">🖨️ """ + t("print") + """</a>
+                        """, unsafe_allow_html=True)
                 
-                with col2:
-                    st.metric("Quantity", f"{mo_data.get('quantity', 0)} {mo_data.get('unit', '')}")
-                    st.metric("Status", mo_data.get('status', 'N/A'))
-                    st.metric("Parts Count", len(mo_full_data.get('parts', [])))
-                
-                with col3:
-                    st.metric("Operations Count", len(mo_full_data.get('operations', [])))
-                
-                st.info(f"""
-                **PDF will be generated with:**
-                - Item: {mo_data.get('item_title', 'N/A')}
-                - MO Code: {mo_data.get('code', 'N/A')}
-                - Quantity: {mo_data.get('quantity', 0)} {mo_data.get('unit', '')}
-                - Parts/Ingredients: {len(mo_full_data.get('parts', []))}
-                - Operations: {len(mo_full_data.get('operations', []))}
-                """)
-                
-                # Generate PDF button
-                col1, col2, col3 = st.columns([1, 2, 1])
-                with col2:
-                    if st.button("🖨️ Generate Routing PDF", type="primary", use_container_width=True, key="generate_routing_pdf"):
-                        with st.spinner("Generating Routing PDF..."):
-                            try:
-                                # Generate PDF using cached items and units
-                                pdf_file = generate_mo_recipe_pdf(
-                                    mo_data,
-                                    mo_full_data,
-                                    all_items,
-                                    all_units
-                                )
-                                
-                                # Store PDF file path in session state
-                                st.session_state.routing_pdf_file = pdf_file
-                                st.session_state.show_routing = True
-                                
-                                st.success("🎉 **Routing PDF Generated Successfully!**")
-                                
-                                # Read PDF bytes for download and preview
-                                with open(pdf_file, 'rb') as f:
-                                    pdf_bytes = f.read()
-                                    st.session_state.routing_pdf_bytes = pdf_bytes
-                                
-                                st.rerun()
-                            
-                            except Exception as e:
-                                st.error(f"❌ An error occurred while generating the PDF: {str(e)}")
-                                logger.error(f"Error generating routing PDF: {e}")
-                                st.exception(e)
-                
-                # Display PDF download and preview if generated
+                # Display PDF preview if generated
                 if st.session_state.get('routing_pdf_file') and st.session_state.get('show_routing'):
                     st.divider()
-                    st.subheader("📥 Download & Print Routing PDF")
-                    
                     pdf_bytes = st.session_state.get('routing_pdf_bytes')
                     if pdf_bytes:
-                        # Download button
-                        col1, col2, col3 = st.columns([1, 2, 1])
-                        with col2:
-                            st.download_button(
-                                label="📥 Download Routing PDF",
-                                data=pdf_bytes,
-                                file_name=f"{mo_data.get('item_code', 'recipe')}_{mo_data.get('code', 'MO')}_routing.pdf",
-                                mime="application/pdf",
-                                type="primary",
-                                use_container_width=True,
-                                key="download_routing_pdf"
-                            )
-                            
-                            # Preview PDF using base64 embedding
-                            st.markdown("### 📄 PDF Preview")
-                            import base64
-                            pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
-                            pdf_display = f'<iframe src="data:application/pdf;base64,{pdf_base64}" width="100%" height="600px" type="application/pdf"></iframe>'
-                            st.markdown(pdf_display, unsafe_allow_html=True)
-                            
-                            # Print button (opens print dialog)
-                            st.markdown(f"""
-                            <script>
-                            function printPDF() {{
-                                const pdfWindow = window.open('');
-                                pdfWindow.document.write('<iframe width="100%" height="100%" src="data:application/pdf;base64,{pdf_base64}"></iframe>');
-                                pdfWindow.document.close();
-                                pdfWindow.focus();
-                                pdfWindow.print();
-                            }}
-                            </script>
-                            <button onclick="printPDF()" style="
-                                background-color: #1E3A8A;
-                                color: white;
-                                padding: 0.75rem 1.5rem;
-                                border-radius: 0.5rem;
-                                border: none;
-                                cursor: pointer;
-                                font-size: 1rem;
-                                width: 100%;
-                                margin-top: 1rem;
-                            ">🖨️ Print PDF</button>
-                            """, unsafe_allow_html=True)
+                        # Preview PDF using base64 embedding
+                        st.markdown("### 📄 " + t("pdf_preview"))
+                        import base64
+                        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                        pdf_display = f'<iframe src="data:application/pdf;base64,{pdf_base64}" width="100%" height="600px" type="application/pdf"></iframe>'
+                        st.markdown(pdf_display, unsafe_allow_html=True)
+                        # Lower "Print PDF" button removed - workers use only the green Print above
         
         # Reset button
         st.divider()
-        if st.button("🔄 Start Over", use_container_width=True):
+        if st.button("🔄 " + t("start_over"), use_container_width=True):
             reset_state_machine()
             st.rerun()
 

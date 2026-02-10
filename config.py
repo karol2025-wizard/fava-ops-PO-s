@@ -2,12 +2,13 @@ import toml
 import os
 
 def load_secrets():
-    secrets_path = os.getenv("SECRETS_PATH", ".streamlit/secrets.toml")
+    # Resolver la ruta relativa a la raíz del proyecto (donde está config.py)
+    _root = os.path.dirname(os.path.abspath(__file__))
+    secrets_path = os.getenv("SECRETS_PATH", os.path.join(_root, ".streamlit", "secrets.toml"))
     try:
-        with open(secrets_path, "r") as f:
-            secrets = toml.load(f)
+        with open(secrets_path, "r", encoding="utf-8") as f:
+            return toml.load(f)
     except FileNotFoundError:
-        secrets = {}
-    return secrets
+        return {}
 
 secrets = load_secrets()

@@ -20,17 +20,16 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
 
 if defined LOCAL_IP (
     echo El servidor estara disponible en:
-    echo   - Local: http://localhost:8504/
-    echo   - Red:   http://!LOCAL_IP!:8504/
+    echo   - Local: http://localhost:8502/
+    echo   - Red:   http://!LOCAL_IP!:8502/
     echo.
-    echo Para acceder a MO and Recipes desde otras PCs, usa:
-    echo   http://!LOCAL_IP!:8504/mo_and_recipes
+    echo Solo se muestra MO and Recipes - sin menu de navegacion.
 ) else (
     echo No se pudo obtener la IP local automaticamente.
-    echo Ejecuta 'ipconfig' y usa: http://TU_IP:8504/mo_and_recipes
+    echo Ejecuta 'ipconfig' y usa: http://TU_IP:8502/
 )
 echo.
 echo ========================================
 echo.
-call venv\Scripts\python.exe -m streamlit run home.py --server.address=0.0.0.0 --server.port=8504
+call venv\Scripts\python.exe -m streamlit run mo_only.py --server.address=0.0.0.0 --server.port=8502
 pause
