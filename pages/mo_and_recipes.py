@@ -441,7 +441,7 @@ PROFESSIONAL_CATEGORIES = {
     },
     'Dips & Sauces': {
         'keywords': ['hummus', 'mutabbal', 'mouhammara', 'tarator', 'mayo', 'yogourt', 'yogurt', 'sauce', 'marinade', 'terbyelli', 'confit tomatoes', 'labneh', 'tajin', 'dressing', 'menemen'],
-        'item_codes': ['A1564', 'A1563', 'A1566', 'A1565', 'A1545', 'A1550', 'A1544', 'A1549', 'A1280', 'A1871', 'A1612', 'A1575', 'A1049', 'A1452', 'A1720', 'A1640', 'A1551', 'A1553', 'A1646', 'A1650', 'A1641', 'A00571', 'A00589']
+        'item_codes': ['A1564', 'A1563', 'A1566', 'A1565', 'A1545', 'A1550', 'A1544', 'A1549', 'A1280', 'A1871', 'A1612', 'A1575', 'A1049', 'A1452', 'A1720', 'A1640', 'A1551', 'A1553', 'A1646', 'A1650', 'A1641', 'A00571', 'A00589', 'A00585']
     },
     'Cooked Proteins': {
         'keywords': ['cooked', 'sous vide', 'grilled', 'steamed'],
