@@ -1816,7 +1816,7 @@ def main():
         # BREAD TEAM
         'A1558', 'A1561',
         # NEW / OTHER (added from production list)
-        'A00571', 'A00589', 'A00570', 'A00577', 'A00558'
+        'A00571', 'A00589', 'A00570', 'A00577', 'A00558', 'A00585'
     }
     
     # Filter to only show allowed item codes
