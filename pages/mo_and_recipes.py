@@ -43,6 +43,10 @@ TRANSLATIONS = {
         'change_action': 'Change Action',
         'step2_category': 'Step 2: Select Category',
         'refresh_data': 'Refresh Data',
+        'search_products': 'Search Products',
+        'search_placeholder': 'Type product name or code...',
+        'search_results': 'Search Results',
+        'no_search_results': 'No products found matching your search.',
         'cache_cleared': 'Cache cleared! Reloading...',
         'no_categories': 'No categories found. This might indicate:',
         'items_loading': 'Items are still loading (check sidebar for cache status)',
@@ -99,6 +103,10 @@ TRANSLATIONS = {
         'change_action': 'تغيير الإجراء',
         'step2_category': 'الخطوة 2: اختر الفئة',
         'refresh_data': 'تحديث البيانات',
+        'search_products': 'البحث عن المنتجات',
+        'search_placeholder': 'اكتب اسم المنتج أو الرمز...',
+        'search_results': 'نتائج البحث',
+        'no_search_results': 'لم يتم العثور على منتجات تطابق البحث.',
         'cache_cleared': 'تم مسح الذاكرة المؤقتة! جاري إعادة التحميل...',
         'no_categories': 'لم يتم العثور على فئات. قد يشير ذلك إلى:',
         'items_loading': 'جاري تحميل العناصر',
@@ -267,6 +275,10 @@ def initialize_session_state():
     # Legacy alias for backward compatibility
     if 'selected_category' not in st.session_state:
         st.session_state.selected_category = None
+    
+    # Search query for product search
+    if 'search_query' not in st.session_state:
+        st.session_state.search_query = ''
     
     # State 3: Item Selection
     if 'item_selected' not in st.session_state:
@@ -1897,6 +1909,18 @@ def main():
             st.success(t("cache_cleared"))
             st.rerun()
     
+    # Search functionality
+    search_query = st.text_input(
+        "🔍 " + t("search_products"),
+        value=st.session_state.get('search_query', ''),
+        placeholder=t("search_placeholder"),
+        key="search_input",
+        help="Search for products by name or code"
+    )
+    
+    # Store search query in session state
+    st.session_state.search_query = search_query
+    
     # Extract unique professional categories from all filtered items
     # Assign professional category to each item
     categories = []
@@ -1907,42 +1931,59 @@ def main():
         # Get unique professional categories, sorted alphabetically
         categories = sorted(list(set([item.get('professional_category', 'Other Products') for item in filtered_items])))
     
-    # Debug info (can be removed later)
-    if not categories:
-        st.warning("⚠️ No categories found. This might indicate:")
-        st.info("""
-        - Items are still loading (check sidebar for cache status)
-        - Items don't match the allowed item codes filter
-        - All items are filtered out (is_raw = True)
-        """)
+    # Handle search functionality (optional - shows results above categories)
+    if search_query and search_query.strip():
+        # Filter items based on search query (search in title and code)
+        search_lower = search_query.lower().strip()
+        search_results = [
+            item for item in filtered_items
+            if search_lower in item.get('title', '').lower() or 
+               search_lower in item.get('code', '').lower()
+        ]
         
-        # Show debug info
-        with st.expander("🔍 Debug Information"):
-            st.write(f"**Total items loaded:** {len(all_items)}")
-            st.write(f"**Filtered items (is_raw=False):** {len([item for item in all_items if item.get('is_raw') == False])}")
-            st.write(f"**Filtered items (allowed codes):** {len(filtered_items)}")
+        # Sort search results by title
+        search_results = sorted(search_results, key=lambda x: x.get('title', ''))
+        
+        if search_results:
+            st.subheader(t("search_results") + f" ({len(search_results)})")
             
-            # Show sample items
-            if all_items:
-                sample_item = all_items[0]
-                st.write(f"**Sample item keys:** {list(sample_item.keys())[:10]}...")
-                st.write(f"**Sample item code:** {sample_item.get('code', 'N/A')}")
-                st.write(f"**Sample item is_raw:** {sample_item.get('is_raw', 'N/A')}")
-                st.write(f"**Sample item in allowed codes:** {sample_item.get('code') in ALLOWED_ITEM_CODES if sample_item.get('code') else False}")
+            # Display search results in a grid (3 columns)
+            cols_per_row = 3
+            search_cols = st.columns(cols_per_row)
             
-            if filtered_items:
-                sample_filtered = filtered_items[0]
-                st.write(f"**Sample filtered item code:** {sample_filtered.get('code', 'N/A')}")
-                st.write(f"**Sample filtered item title:** {sample_filtered.get('title', 'N/A')}")
-                st.write(f"**Sample filtered professional_category:** {sample_filtered.get('professional_category', 'N/A')}")
-            
-            # Show category distribution
-            if filtered_items:
-                category_counts = {}
-                for item in filtered_items:
-                    cat = item.get('professional_category', 'Other Products')
-                    category_counts[cat] = category_counts.get(cat, 0) + 1
-                st.write(f"**Category distribution:** {category_counts}")
+            for idx, item in enumerate(search_results):
+                col_idx = idx % cols_per_row
+                item_title = item.get('title', 'Unknown')
+                item_code = item.get('code', '')
+                item_category = item.get('professional_category', 'Other Products')
+                category_icon = CATEGORY_ICONS.get(item_category, '📋')
+                
+                with search_cols[col_idx]:
+                    # Show category icon and name in button
+                    button_label = f"{category_icon} {item_title}\n({item_code})"
+                    
+                    if st.button(
+                        button_label,
+                        key=f"search_item_{item_code}",
+                        use_container_width=True,
+                        type="primary" if (st.session_state.item_selected == item or st.session_state.selected_item == item) else "secondary"
+                    ):
+                        st.session_state.item_selected = item
+                        st.session_state.selected_item = item  # Legacy sync
+                        # Set category for context
+                        st.session_state.category_selected = item_category
+                        st.session_state.selected_category = item_category  # Legacy sync
+                        # Clear search query
+                        st.session_state.search_query = ''
+                        # Clear recipe state when selecting a new item
+                        st.session_state.current_recipe = None
+                        st.session_state.recipe_item_code = None
+                        st.session_state.step = 4
+                        st.rerun()
+        else:
+            st.info("🔍 " + t("no_search_results"))
+        
+        st.divider()
     
     # Create columns for category buttons (3 per row for better touchscreen UX)
     cols_per_row = 3
@@ -1970,11 +2011,48 @@ def main():
                     st.session_state.step = 3
                     st.rerun()
     else:
-        st.info("💡 Waiting for items to load... If this persists:")
-        st.write("1. Check the sidebar for cache status")
-        st.write("2. Click '🔄 Refresh Data' button above to reload from API")
-        st.write("3. Check the debug information below for details")
-        st.write("4. Verify API credentials in secrets.toml")
+        # Only show warning if no search is active
+        if not (search_query and search_query.strip()):
+            st.warning("⚠️ No categories found. This might indicate:")
+            st.info("""
+            - Items are still loading (check sidebar for cache status)
+            - Items don't match the allowed item codes filter
+            - All items are filtered out (is_raw = True)
+            """)
+            
+            # Show debug info
+            with st.expander("🔍 Debug Information"):
+                st.write(f"**Total items loaded:** {len(all_items)}")
+                st.write(f"**Filtered items (is_raw=False):** {len([item for item in all_items if item.get('is_raw') == False])}")
+                st.write(f"**Filtered items (allowed codes):** {len(filtered_items)}")
+                
+                # Show sample items
+                if all_items:
+                    sample_item = all_items[0]
+                    st.write(f"**Sample item keys:** {list(sample_item.keys())[:10]}...")
+                    st.write(f"**Sample item code:** {sample_item.get('code', 'N/A')}")
+                    st.write(f"**Sample item is_raw:** {sample_item.get('is_raw', 'N/A')}")
+                    st.write(f"**Sample item in allowed codes:** {sample_item.get('code') in ALLOWED_ITEM_CODES if sample_item.get('code') else False}")
+                
+                if filtered_items:
+                    sample_filtered = filtered_items[0]
+                    st.write(f"**Sample filtered item code:** {sample_filtered.get('code', 'N/A')}")
+                    st.write(f"**Sample filtered item title:** {sample_filtered.get('title', 'N/A')}")
+                    st.write(f"**Sample filtered professional_category:** {sample_filtered.get('professional_category', 'N/A')}")
+                
+                # Show category distribution
+                if filtered_items:
+                    category_counts = {}
+                    for item in filtered_items:
+                        cat = item.get('professional_category', 'Other Products')
+                        category_counts[cat] = category_counts.get(cat, 0) + 1
+                    st.write(f"**Category distribution:** {category_counts}")
+            
+            st.info("💡 Waiting for items to load... If this persists:")
+            st.write("1. Check the sidebar for cache status")
+            st.write("2. Click '🔄 Refresh Data' button above to reload from API")
+            st.write("3. Check the debug information below for details")
+            st.write("4. Verify API credentials in secrets.toml")
 
     # ============================================
     # STEP 3: SELECT ITEM (from ERP Quick MO Creator)
