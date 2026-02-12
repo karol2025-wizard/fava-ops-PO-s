@@ -109,13 +109,16 @@ def get_lot_and_expiry(item_code: str, po_id: int, receiving_date: date) -> tupl
     lot_number = None
     expiry_date = None
 
-    # Normalize item code and detect 7‑day dips
-    dips_7_day = {'A1564', 'A1565', 'A1563'}
+    # Normalize item code and detect dips with custom shelf life
+    dips_5_day = {'A1564', 'A1565', 'A1563'}  # Eggplant Mutabbal, Hummus, Beet Mutabbal
+    dips_8_day = {'A1566'}  # Mouhammara
     normalized_code = (item_code or '').strip().upper()
 
     # Get item details from cache once
     item = get_item_from_cache(item_code)
-    is_7_day_dip = normalized_code in dips_7_day
+    is_5_day_dip = normalized_code in dips_5_day
+    is_8_day_dip = normalized_code in dips_8_day
+    is_custom_dip = is_5_day_dip or is_8_day_dip
 
     # Get matching lots from cache
     matching_lots = get_lots_from_cache(item_code, po_id)
@@ -123,15 +126,19 @@ def get_lot_and_expiry(item_code: str, po_id: int, receiving_date: date) -> tupl
     if matching_lots:
         lot = matching_lots[0]
         lot_number = lot.get('code')
-        # For the 7‑day dips we want to ignore the expiry coming from MRPeasy
-        # and always calculate it as receiving_date + 7 days.
-        if lot.get('expiry') and not is_7_day_dip:
+        # For dips with custom shelf life, ignore the expiry coming from MRPeasy
+        # and always calculate it based on the custom days.
+        if lot.get('expiry') and not is_custom_dip:
             expiry_date = datetime.fromtimestamp(lot['expiry']).strftime("%d/%m/%Y")
 
     if not expiry_date:
-        if is_7_day_dip:
-            # Force 7‑day shelf life for these dips, regardless of MRPeasy config
-            shelf_life = 7
+        if is_5_day_dip:
+            # Force 5-day shelf life for these dips, regardless of MRPeasy config
+            shelf_life = 5
+            expiry_date = (receiving_date + timedelta(days=shelf_life)).strftime("%d/%m/%Y")
+        elif is_8_day_dip:
+            # Force 8-day shelf life for Mouhammara, regardless of MRPeasy config
+            shelf_life = 8
             expiry_date = (receiving_date + timedelta(days=shelf_life)).strftime("%d/%m/%Y")
         elif item and item.get('shelf_life'):
             shelf_life = int(item['shelf_life'])

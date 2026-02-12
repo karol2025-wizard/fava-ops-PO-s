@@ -469,17 +469,32 @@ class APIManager:
             if not article_id:
                 raise ValueError(f"No article_id found for item with code {item_code}. The item may not be properly configured in MRPEasy.")
 
-            # Ensure 7-day shelf life for dips (A1564, A1565, A1563)
-            DIPS_7_DAY = {'A1564', 'A1565', 'A1563'}
-            if item_code and item_code.strip().upper() in DIPS_7_DAY and item.get('shelf_life') != 7:
-                self.update_item_shelf_life(article_id, 7)
+            # Ensure custom shelf life for dips
+            # A1564, A1565, A1563: 5-day shelf life
+            # A1566: 8-day shelf life
+            DIPS_5_DAY = {'A1564', 'A1565', 'A1563'}  # Eggplant Mutabbal, Hummus, Beet Mutabbal
+            DIPS_8_DAY = {'A1566'}  # Mouhammara
+            
+            normalized_code = item_code.strip().upper() if item_code else ''
+            if normalized_code in DIPS_5_DAY and item.get('shelf_life') != 5:
+                self.update_item_shelf_life(article_id, 5)
+            elif normalized_code in DIPS_8_DAY and item.get('shelf_life') != 8:
+                self.update_item_shelf_life(article_id, 8)
 
-        # When article_id passed with item_code, ensure 7-day shelf life for dips
-        DIPS_7_DAY = {'A1564', 'A1565', 'A1563'}
-        if item_code and article_id and item_code.strip().upper() in DIPS_7_DAY:
-            item = self.get_item_details(item_code.strip())
-            if item and item.get('shelf_life') != 7:
-                self.update_item_shelf_life(article_id, 7)
+        # When article_id passed with item_code, ensure custom shelf life for dips
+        DIPS_5_DAY = {'A1564', 'A1565', 'A1563'}  # Eggplant Mutabbal, Hummus, Beet Mutabbal
+        DIPS_8_DAY = {'A1566'}  # Mouhammara
+        
+        if item_code and article_id:
+            normalized_code = item_code.strip().upper()
+            if normalized_code in DIPS_5_DAY:
+                item = self.get_item_details(item_code.strip())
+                if item and item.get('shelf_life') != 5:
+                    self.update_item_shelf_life(article_id, 5)
+            elif normalized_code in DIPS_8_DAY:
+                item = self.get_item_details(item_code.strip())
+                if item and item.get('shelf_life') != 8:
+                    self.update_item_shelf_life(article_id, 8)
 
         # Ensure we have an article_id and quantity
         if not article_id:

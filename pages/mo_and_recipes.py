@@ -2009,6 +2009,7 @@ def main():
                     st.session_state.item_selected = None
                     st.session_state.selected_item = None  # Legacy sync
                     st.session_state.step = 3
+                    st.session_state.scroll_to_items = True  # Flag to trigger scroll
                     st.rerun()
     else:
         # Only show warning if no search is active
@@ -2059,7 +2060,98 @@ def main():
     # ============================================
     if st.session_state.category_selected:
         st.divider()
+        # Add a container with unique ID for scrolling
+        st.markdown('<div id="select-item-section"></div>', unsafe_allow_html=True)
         st.header(t("step3_item"))
+        
+        # Add JavaScript to scroll to select item section when category is selected
+        # This must be AFTER the element is created
+        if st.session_state.get('scroll_to_items', False):
+            scroll_script = """
+            <script>
+                (function() {
+                    let scrolled = false;
+                    
+                    function performScroll(element) {
+                        if (scrolled) return;
+                        scrolled = true;
+                        
+                        // Scroll with smooth behavior
+                        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        
+                        // Also try scrolling the window
+                        setTimeout(function() {
+                            window.scrollTo({
+                                top: element.offsetTop - 50,
+                                behavior: 'smooth'
+                            });
+                        }, 100);
+                    }
+                    
+                    function scrollToSelectItem() {
+                        // Try to find the element by ID
+                        let element = document.getElementById('select-item-section');
+                        
+                        // If not found, try to find by looking for the header text
+                        if (!element) {
+                            const headers = document.querySelectorAll('h1, h2, h3');
+                            for (let header of headers) {
+                                const text = header.textContent || '';
+                                if (text.includes('Step 3') || text.includes('الخطوة 3') || 
+                                    text.includes('Select Item') || text.includes('اختر العنصر')) {
+                                    element = header;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (element) {
+                            performScroll(element);
+                            return true;
+                        }
+                        return false;
+                    }
+                    
+                    // Try immediately
+                    if (scrollToSelectItem()) {
+                        return;
+                    }
+                    
+                    // Use MutationObserver to watch for the element being added
+                    const observer = new MutationObserver(function(mutations) {
+                        if (scrollToSelectItem()) {
+                            observer.disconnect();
+                        }
+                    });
+                    
+                    // Start observing
+                    observer.observe(document.body, {
+                        childList: true,
+                        subtree: true
+                    });
+                    
+                    // Also try with intervals as fallback
+                    let attempts = 0;
+                    const maxAttempts = 40;
+                    const interval = setInterval(function() {
+                        attempts++;
+                        if (scrollToSelectItem() || attempts >= maxAttempts) {
+                            clearInterval(interval);
+                            observer.disconnect();
+                        }
+                    }, 100);
+                    
+                    // Cleanup after 5 seconds
+                    setTimeout(function() {
+                        observer.disconnect();
+                        clearInterval(interval);
+                    }, 5000);
+                })();
+            </script>
+            """
+            st.components.v1.html(scroll_script, height=0)
+            # Reset the flag after using it
+            st.session_state.scroll_to_items = False
         # Get icon for selected category
         selected_icon = CATEGORY_ICONS.get(st.session_state.category_selected, '📋')
         st.info(f"**{t('category')}:** {selected_icon} {st.session_state.category_selected}")
