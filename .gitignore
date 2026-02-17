@@ -30,11 +30,12 @@ credentials/
 *.p12
 *.pfx
 
-# Environment variables
+# Environment variables (NUNCA commitear archivos con secretos reales)
 .env
 .env.local
 .env.*.local
 *.env
+# .env.example SÍ se commitea (solo plantilla sin valores reales)
 
 # API Keys and Secrets (additional patterns)
 *api*key*
@@ -43,8 +44,15 @@ credentials/
 *token*
 *credential*
 
+# Distribution copies (redundant, may contain credentials)
+dist/
+
+# MRP Boxhero sync - separate Node project
+mrp-boxhero-sync/
+
 # Archive and backup files
 /archive/
+/backups/
 *.zip
 *.bak
 *.backup
