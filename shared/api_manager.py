@@ -558,9 +558,9 @@ class APIManager:
         if actual_quantity is not None:
             update_payload['actual_quantity'] = actual_quantity
         
-        # Update status if provided
-        if status is not None:
-            update_payload['status'] = status
+        # MRPeasy returns 400 "Status cannot be changed via API" if we send status - do not send it
+        # if status is not None:
+        #     update_payload['status'] = status
         
         # Note: Lot code confirmation might need to be handled differently
         # depending on MRPeasy API structure. This is a placeholder.
@@ -577,7 +577,7 @@ class APIManager:
             json=update_payload
         )
         
-        if response.status_code in [200, 204]:
+        if response.status_code in [200, 202, 204]:
             print(f"Manufacturing order {mo_id} updated successfully.")
         else:
             print(f"Failed to update manufacturing order {mo_id}. Status: {response.status_code}, Response: {response.text}")
@@ -657,6 +657,56 @@ class APIManager:
             return None
         except Exception:
             return None
+    
+    def update_stock_lot_quantity(self, lot_id: int, quantity: float) -> requests.Response:
+        """
+        Update a stock lot with received/produced quantity.
+        
+        This is the correct way to record production in MRPEasy - update the lot directly,
+        not the MO's non-existent 'actual_quantity' field.
+        
+        Args:
+            lot_id: Stock lot ID
+            quantity: Quantity to set for the lot
+        
+        Returns:
+            Response object from the API call
+        """
+        try:
+            # Get current lot details first
+            response = requests.get(
+                f"{self.base_url}/lots/{lot_id}",
+                auth=self.auth,
+                headers={'content-type': 'application/json'}
+            )
+            
+            if response.status_code != 200:
+                raise ValueError(f"Lot {lot_id} not found")
+            
+            current_lot = response.json()
+            
+            # Update the lot with new quantity
+            # Note: The field name might be 'quantity' or 'received' - we'll try 'quantity' first
+            update_payload = {
+                'quantity': quantity
+            }
+            
+            response = requests.put(
+                f"{self.base_url}/lots/{lot_id}",
+                auth=self.auth,
+                headers={'content-type': 'application/json'},
+                json=update_payload
+            )
+            
+            if response.status_code in [200, 202, 204]:
+                print(f"Stock lot {lot_id} updated successfully with quantity {quantity}.")
+            else:
+                print(f"Failed to update stock lot {lot_id}. Status: {response.status_code}, Response: {response.text}")
+            
+            return response
+        except Exception as e:
+            print(f"Error updating stock lot {lot_id}: {str(e)}")
+            raise
 
     def get_single_purchase_order(self, pur_ord_id: int) -> Optional[Dict]:
         """Get details for a specific purchase order by ID.

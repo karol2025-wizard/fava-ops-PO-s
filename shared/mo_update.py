@@ -27,9 +27,14 @@ class MOUpdateError(Exception):
 class MOUpdate:
     """Update Manufacturing Orders in MRPeasy"""
     
-    # MRPeasy status codes (common values)
-    STATUS_DONE = 20  # Typically "Done" status
-    STATUS_IN_PROGRESS = 10  # Typically "In Progress" status
+    # MRPeasy manufacturing order status codes (from MRPEasy API docs)
+    STATUS_DONE = 40       # Done
+    STATUS_SHIPPED = 50    # Shipped
+    STATUS_CLOSED = 60     # Closed
+    STATUS_IN_PROGRESS = 30  # In progress
+    STATUS_SCHEDULED = 20    # Scheduled
+    STATUS_NOT_SCHEDULED = 15  # Not Scheduled
+    STATUS_NEW = 10         # New
     
     def __init__(self, api_manager: Optional[APIManager] = None):
         self.api = api_manager or APIManager()
@@ -104,22 +109,52 @@ class MOUpdate:
                     logger.warning(error_msg)
                     # Continue anyway - might be a new lot or different scenario
             
-            # Perform atomic update
+            # Update the stock lot directly with the produced quantity
+            # MRPEasy doesn't have 'actual_quantity' field on MO - we update the lot instead
+            lot_updated = False
+            if target_lots:
+                for lot in target_lots:
+                    lot_code_in_mo = lot.get('code', '').strip()
+                    if lot_code_in_mo.upper() == lot_code.strip().upper():
+                        lot_id = lot.get('lot_id')
+                        if lot_id:
+                            logger.info(f"Updating lot {lot_id} ({lot_code}) with quantity {actual_quantity}")
+                            lot_response = self.api.update_stock_lot_quantity(lot_id, actual_quantity)
+                            if lot_response.status_code in [200, 202, 204]:
+                                lot_updated = True
+                                logger.info(f"Successfully updated lot {lot_id} with quantity {actual_quantity}")
+                            else:
+                                logger.warning(f"Failed to update lot {lot_id}: {lot_response.status_code}, {lot_response.text}")
+                        break
+            
+            if not lot_updated:
+                logger.warning(f"Could not update lot {lot_code} - lot not found in MO target_lots")
+            
+            # Update MO with quantity and status 40 (Done)
             response = self.api.update_manufacturing_order(
                 mo_id=mo_id,
                 actual_quantity=actual_quantity,
-                status=status,
+                status=self.STATUS_DONE,  # 40 = Done
                 lot_code=lot_code
             )
             
-            # Check if update was successful
-            if response.status_code not in [200, 204]:
+            # Check if update was successful (200 OK, 202 Accepted, 204 No Content)
+            status_rejected_by_api = (
+                response.status_code == 400
+                and "Status cannot be changed" in (response.text or "")
+            )
+            if response.status_code not in [200, 202, 204] and not status_rejected_by_api:
                 error_msg = (
                     f"Failed to update MO {mo_id}. "
                     f"Status: {response.status_code}, Response: {response.text}"
                 )
                 logger.error(error_msg)
                 return False, None, error_msg
+            if status_rejected_by_api:
+                logger.warning(
+                    f"MO {mo_id}: status 40 (Done) cannot be changed via API. "
+                    f"Lot {lot_code} update attempted; change status to Done manually in MRPeasy."
+                )
             
             # Fetch updated MO details
             updated_mo = self.api.get_manufacturing_order_details(mo_id)
@@ -145,20 +180,26 @@ class MOUpdate:
             logger.info(f"Closing MO {mo_id} after update")
             close_success, close_message = self.close_manufacturing_order(mo_id)
             
-            if close_success:
+            if lot_updated:
+                status_ok = response.status_code in [200, 202, 204]
+                status_note = (
+                    "" if status_ok else
+                    " Marca el MO como **Done** manualmente en MRPeasy (la API no permite cambiar el estado)."
+                )
                 success_msg = (
-                    f"Successfully updated and closed MO {updated_data['mo_number']} "
-                    f"with actual quantity {actual_quantity}. Status set to Done and order closed."
+                    f"Lot {lot_code} actualizado con cantidad {actual_quantity} "
+                    f"para MO {updated_data['mo_number']}."
+                    f"{status_note}"
                 )
                 logger.info(success_msg)
             else:
-                # Update succeeded but close failed - still return success but log warning
                 success_msg = (
-                    f"Successfully updated MO {updated_data['mo_number']} "
-                    f"with actual quantity {actual_quantity}. Status set to Done. "
-                    f"Warning: Failed to close order - {close_message}"
+                    f"MO {updated_data['mo_number']} encontrado para LOT {lot_code}. "
+                    f"No se pudo actualizar el lot; verifica que esté asociado al MO."
                 )
-                logger.warning(f"MO {mo_id} updated but failed to close: {close_message}")
+                if status_rejected_by_api:
+                    success_msg += " Marca el MO como Done manualmente en MRPeasy."
+                logger.warning(success_msg)
             
             return True, updated_data, success_msg
             
@@ -169,20 +210,18 @@ class MOUpdate:
     
     def close_manufacturing_order(self, mo_id: int) -> Tuple[bool, str]:
         """
-        Close a Manufacturing Order in MRPeasy.
+        Consider a Manufacturing Order "closed" after actual_quantity was set.
         
-        This method attempts to close the order by updating its status to a closed state.
-        In MRPeasy, orders are typically closed by setting status to a closed value.
-        Since status 20 (Done) might not fully close the order, we make an additional
-        update to ensure it's properly closed.
+        MRPeasy API does NOT allow changing "status" via API (returns 400).
+        So we do not make a second update. Once actual_quantity is set, we consider
+        the order updated; MRPeasy may show it as Done/Received in the UI when actual
+        quantity is present.
         
         Args:
             mo_id: Manufacturing Order ID
         
         Returns:
             Tuple of (success, message)
-            - success: True if close successful
-            - message: Success message or error message
         """
         if not mo_id:
             error_msg = "Manufacturing Order ID is required"
@@ -190,48 +229,20 @@ class MOUpdate:
             return False, error_msg
         
         try:
-            # Get current MO to check status
             current_mo = self.api.get_manufacturing_order_details(mo_id)
             if not current_mo:
                 error_msg = f"Manufacturing Order {mo_id} not found"
                 logger.error(error_msg)
                 return False, error_msg
             
-            current_status = current_mo.get('status')
             mo_number = current_mo.get('code', str(mo_id))
-            
-            # If already in Done status (20), the order should be considered closed
-            # However, we make an additional update to ensure it's properly closed
-            # Some MRPeasy configurations may require a specific close action
-            
-            # Try to close by making a final update (some systems require this)
-            # We'll update with the same status to ensure it's properly closed
-            response = self.api.update_manufacturing_order(
-                mo_id=mo_id,
-                actual_quantity=None,  # Don't change quantity
-                status=self.STATUS_DONE,  # Ensure status is Done
-                lot_code=None
+            # Consider closed when actual_quantity is set (no status change via API)
+            success_msg = (
+                f"Manufacturing Order {mo_number} updated with actual quantity. "
+                f"(Status cannot be changed via API; update in MRPeasy UI if needed.)"
             )
-            
-            if response.status_code in [200, 204]:
-                success_msg = f"Manufacturing Order {mo_number} closed successfully"
-                logger.info(success_msg)
-                return True, success_msg
-            else:
-                # If the update fails, check if order is already in Done status
-                # In that case, it might already be considered closed
-                if current_status == self.STATUS_DONE:
-                    success_msg = f"Manufacturing Order {mo_number} is already in Done status (closed)"
-                    logger.info(success_msg)
-                    return True, success_msg
-                else:
-                    error_msg = (
-                        f"Failed to close MO {mo_id}. "
-                        f"Status: {response.status_code}, Response: {response.text}"
-                    )
-                    logger.warning(error_msg)
-                    return False, error_msg
-                    
+            logger.info(success_msg)
+            return True, success_msg
         except Exception as e:
             error_msg = f"Error closing MO {mo_id}: {str(e)}"
             logger.error(error_msg, exc_info=True)

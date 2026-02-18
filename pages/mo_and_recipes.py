@@ -453,7 +453,7 @@ PROFESSIONAL_CATEGORIES = {
     },
     'Dips & Sauces': {
         'keywords': ['hummus', 'mutabbal', 'mouhammara', 'tarator', 'mayo', 'yogourt', 'yogurt', 'sauce', 'marinade', 'terbyelli', 'confit tomatoes', 'labneh', 'tajin', 'dressing', 'menemen'],
-        'item_codes': ['A1564', 'A1563', 'A1566', 'A1565', 'A1545', 'A1550', 'A1544', 'A1549', 'A1280', 'A1871', 'A1612', 'A1575', 'A1049', 'A1452', 'A1720', 'A1640', 'A1551', 'A1553', 'A1646', 'A1650', 'A1641', 'A00571', 'A00589', 'A00585']
+        'item_codes': ['A1564', 'A1563', 'A1566', 'A1565', 'A1545', 'A1550', 'A1544', 'A1549', 'A1280', 'A1871', 'A1612', 'A1575', 'A1049', 'A1452', 'A1720', 'A1640', 'A1551', 'A1553', 'A1646', 'A1650', 'A1641', 'A00571', 'A00589', 'A00585', 'A00603']
     },
     'Cooked Proteins': {
         'keywords': ['cooked', 'sous vide', 'grilled', 'steamed'],
@@ -1809,7 +1809,7 @@ def main():
         'A1640', 'A1615', 'A1650', 'A1634', 'A1693', 'A1942', 'A1641',
         # ALEJANDRO TEAM (Dips & Sauces)
         'A1564', 'A1563', 'A1566', 'A1565', 'A1575', 'A1616', 'A1871', 'A1550', 'A1545', 
-        'A1280', 'A1544', 'A1549', 'A1612', 'A1649',
+        'A1280', 'A1544', 'A1549', 'A1612', 'A1649', 'A00603',
         # ASSEMBLY TEAM
         'A1689', 'A1737', 'A1629', 'A1684', 'A1688', 'A1685', 'A1026', 'A1686', 
         'A1385',

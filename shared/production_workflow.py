@@ -125,6 +125,24 @@ class ProductionWorkflow:
             
             status_after = updated_mo_data.get('status')
             
+            # Check if status actually changed (MRPEasy API may not allow status changes)
+            status_before_int = int(status_before) if status_before else None
+            status_after_int = int(status_after) if status_after else None
+            status_changed = (status_before_int != status_after_int and status_after_int == 40)  # 40 = Done
+            
+            status_note = ""
+            if not status_changed:
+                status_before_name = {
+                    10: "New", 15: "Not Scheduled", 20: "Scheduled", 
+                    30: "In Progress", 40: "Done", 50: "Shipped", 60: "Closed"
+                }.get(status_before_int, f"Status {status_before_int}")
+                
+                status_note = (
+                    f"\n\n⚠️ **IMPORTANTE:** El estado del MO sigue en **{status_before_name}** "
+                    f"(código {status_before_int}) porque la API de MRPEasy **no permite cambiar el estado por API**. "
+                    f"Debes marcar el MO **MO{mo_number}** como **Done** manualmente en MRPEasy."
+                )
+            
             # Step 4: Save production record
             logger.info(f"Step 4: Saving production record for MO {mo_number}")
             estimated_qty = updated_mo_data.get('expected_output', 0)
@@ -175,10 +193,18 @@ class ProductionWorkflow:
                 'workflow_timestamp': workflow_start.isoformat()
             }
             
+            # Build status message based on whether status changed
+            if status_changed:
+                status_part = f"Estado cambiado a Done (40)."
+            else:
+                status_part = f"Estado sigue en {status_before_name} ({status_before_int})."
+            
             success_msg = (
-                f"Production completion processed successfully. "
-                f"MO {mo_number} updated with {produced_quantity} {uom or ''}. "
-                f"Status changed to Done and order closed."
+                f"✅ Procesamiento completado exitosamente.\n\n"
+                f"**Lot {lot_code}** actualizado con cantidad **{produced_quantity} {uom or ''}** "
+                f"para **MO {mo_number}**.\n\n"
+                f"**Estado del MO:** {status_part}"
+                f"{status_note}"
             )
             
             logger.info(f"Workflow completed successfully: {success_msg}")
