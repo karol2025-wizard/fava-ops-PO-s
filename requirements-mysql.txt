@@ -1,0 +1,4 @@
+# Optional: for DatabaseManager to use MySQL for erp_mo_to_import (MO Record Insert / ERP Close MO).
+# Install with: pip install -r requirements-mysql.txt
+# If not installed, the app uses JSON files in data/production/.
+pymysql>=1.0.0
