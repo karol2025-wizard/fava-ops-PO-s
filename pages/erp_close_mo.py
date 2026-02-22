@@ -19,6 +19,17 @@ st.set_page_config(
     layout="wide"
 )
 
+
+def _format_inserted_at(value):
+    """Format inserted_at for display (handles datetime or string from JSON/MySQL)."""
+    if value is None or value == "":
+        return "N/A"
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d %H:%M")
+    s = str(value)
+    return s[:16] if len(s) >= 16 else s
+
+
 def fetch_pending_orders():
     """Fetch all pending orders from database (processed_at = NULL)."""
     try:
@@ -152,7 +163,7 @@ def process_selected_orders(selected_orders, server_url=None, processing_mode="B
                         'result_data': result_data
                     })
                     
-                    if success:
+                    if success and order.get('id') is not None:
                         successful_order_ids.append(order['id'])
                         st.write(f"✅ {lot_code}: {message}")
                     else:
@@ -194,8 +205,9 @@ def process_selected_orders(selected_orders, server_url=None, processing_mode="B
             else:
                 st.warning("⚠️ No results to process")
 
-            # Display batch results
-            display_batch_results_local(results, selected_orders)
+            # Store results to display below main columns (avoids nested columns error)
+            st.session_state.batch_results = (results, selected_orders)
+            st.session_state.show_batch_results = True
 
         else:
             # Individual processing using ProductionWorkflow
@@ -234,7 +246,7 @@ def process_selected_orders(selected_orders, server_url=None, processing_mode="B
                     })
 
                     # If successful, add to list for database update
-                    if success:
+                    if success and order.get('id') is not None:
                         processed_order_ids.append(order['id'])
                         st.write(f"✅ {lot_code}: {message}")
                     else:
@@ -303,16 +315,10 @@ def display_batch_results_local(results, orders):
         successful = sum(1 for r in results if r.get('success', False))
         failed = total - successful
         
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Orders", total)
-        with col2:
-            st.metric("Successful", successful)
-        with col3:
-            st.metric("Failed", failed)
-        with col4:
-            success_rate = (successful / max(total, 1)) * 100
-            st.metric("Success Rate", f"{success_rate:.1f}%")
+        success_rate = (successful / max(total, 1)) * 100
+        st.markdown(
+            f"**Total:** {total} · **Successful:** {successful} · **Failed:** {failed} · **Success rate:** {success_rate:.1f}%"
+        )
 
         # Overall status
         if successful == total:
@@ -493,7 +499,7 @@ with col1:
                 st.write(f"{order['uom']}")
             
             with col_date:
-                st.write(f"{order['inserted_at'].strftime('%Y-%m-%d %H:%M') if order['inserted_at'] else 'N/A'}")
+                st.write(_format_inserted_at(order.get("inserted_at")))
         
         if selected_pending:
             st.success(f"Selected {len(selected_pending)} orders for processing")
@@ -514,7 +520,7 @@ with col1:
                             type="secondary", 
                             help="WARNING: This will mark selected orders as processed WITHOUT actually processing them through the API"):
                     # Get selected order IDs
-                    selected_order_ids = [order['id'] for order in currently_selected]
+                    selected_order_ids = [o['id'] for o in currently_selected if o.get('id') is not None]
                     
                     # Update database
                     update_processed_orders(selected_order_ids)
@@ -535,10 +541,13 @@ with col1:
         st.markdown(f"**{len(st.session_state.failed_orders)} orders** have failed and need attention")
         
         for i, order in enumerate(st.session_state.failed_orders):
-            with st.expander(f"❌ {order['lot_code']} - Qty: {order['quantity']} {order['uom']}"):
-                st.write(f"**Failure Reason:** {order['failed_code']}")
-                st.write(f"**Inserted:** {order['inserted_at'].strftime('%Y-%m-%d %H:%M') if order['inserted_at'] else 'N/A'}")
-                st.write(f"**Quantity:** {order['quantity']} {order['uom']}")
+            lot = order.get("lot_code", "?")
+            qty = order.get("quantity", "?")
+            uom = order.get("uom", "")
+            with st.expander(f"❌ {lot} - Qty: {qty} {uom}"):
+                st.write(f"**Failure Reason:** {order.get('failed_code', 'N/A')}")
+                st.write(f"**Inserted:** {_format_inserted_at(order.get('inserted_at'))}")
+                st.write(f"**Quantity:** {qty} {uom}")
                 
                 st.markdown("---")
                 col1, col2 = st.columns([2, 1])
@@ -550,13 +559,13 @@ with col1:
                         help="WARNING: This will mark this failed order as processed WITHOUT actually processing it through the API"
                     ):
                         # Update database for this single order
-                        update_processed_orders([order['id']])
+                        update_processed_orders([order.get("id")])
                         
                         # Refresh the orders list
                         st.session_state.pending_orders = fetch_pending_orders()
                         st.session_state.failed_orders = fetch_failed_orders()
                         
-                        st.warning(f"⚠️ Order {order['lot_code']} manually marked as processed!")
+                        st.warning(f"⚠️ Order {lot} manually marked as processed!")
                         st.rerun()
 
 with col2:
@@ -585,6 +594,12 @@ with col2:
             st.info("Select orders from the left panel to process them")
     else:
         st.info("Click 'Fetch Orders from Database' to load available orders")
+
+# Batch results (outside columns to avoid "Columns can only be placed inside other columns" error)
+if st.session_state.get("show_batch_results") and st.session_state.get("batch_results"):
+    results, orders = st.session_state.batch_results
+    display_batch_results_local(results, orders)
+    st.session_state.show_batch_results = False
 
 # Footer
 st.markdown("---")

@@ -460,8 +460,8 @@ PROFESSIONAL_CATEGORIES = {
         'item_codes': ['A1619', 'A1861', 'A1574', 'A1490', 'A1942', 'A1903', 'A1639', 'A00577']
     },
     'Raw & Marinated Proteins': {
-        'keywords': ['raw', 'marinated', 'kawarma', 'ground'],
-        'item_codes': ['A1876', 'A1499', 'A1547', 'A1543', 'A1653', 'A1614', 'A1647', 'A1631']
+        'keywords': ['raw', 'marinated', 'kawarma', 'ground', 'kabab'],
+        'item_codes': ['A1876', 'A1499', 'A1547', 'A1543', 'A1653', 'A1614', 'A1647', 'A1631', 'A00608']
     },
     'Ready to Reheat': {
         'keywords': ['to reheat', 'reheat', 'dukka', 'potato spices mix'],
@@ -488,8 +488,8 @@ PROFESSIONAL_CATEGORIES = {
         'item_codes': []
     },
     'Appetizers & Sides': {
-        'keywords': ['borek', 'kibbeh', 'pickles', 'cucumbers', 'yalanji frozen', 'pistachio kibbeh not cooked', 'shrimp kataifi'],
-        'item_codes': ['A1567', 'A1568', 'A1652', 'A1606', 'A1632', 'A1628', 'A1603', 'A1602', 'A1607', 'A1613']
+        'keywords': ['borek', 'kibbeh', 'pickles', 'cucumbers', 'yalanji frozen', 'pistachio kibbeh not cooked', 'shrimp kataifi', 'rice', 'vermicelli'],
+        'item_codes': ['A1567', 'A1568', 'A1652', 'A1606', 'A1632', 'A1628', 'A1603', 'A1602', 'A1607', 'A1613', 'A00604']
     }
 }
 
@@ -1815,13 +1815,13 @@ def main():
         'A1385',
         # SAMIA TEAM
         'A1567', 'A1652', 'A1633', 'A1017', 'A1015', 'A1568', 'A1606', 'A1602', 
-        'A1603', 'A1604',
+        'A1603', 'A1604', 'A00604',
         # RAWAD TEAM
         'A1876', 'A1935', 'A1925', 'A1628', 'A1553', 'A1907',
         # THEODORA TEAM
         'A1607', 'A1613', 'A1632',
         # BUTCHER TEAM
-        'A1499', 'A1547', 'A1543', 'A1614', 'A1647',
+        'A1499', 'A1547', 'A1543', 'A1614', 'A1647', 'A00608',
         # GRILL TEAM
         'A1697', 'A1653', 'A1694', 'A1551', 'A1049', 'A1452', 'A1698', 'A1643', 
         'A1690', 'A1720', 'A1692',

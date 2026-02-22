@@ -133,15 +133,20 @@ class ProductionWorkflow:
             status_note = ""
             if not status_changed:
                 status_before_name = {
-                    10: "New", 15: "Not Scheduled", 20: "Scheduled", 
-                    30: "In Progress", 40: "Done", 50: "Shipped", 60: "Closed"
+                    10: "New", 15: "Not Scheduled", 20: "Scheduled", 35: "Paused",
+                    30: "In Progress", 40: "Done", 50: "Shipped", 60: "Closed", 70: "Cancelled",
                 }.get(status_before_int, f"Status {status_before_int}")
-                
-                status_note = (
-                    f"\n\n⚠️ **IMPORTANTE:** El estado del MO sigue en **{status_before_name}** "
-                    f"(código {status_before_int}) porque la API de MRPEasy **no permite cambiar el estado por API**. "
-                    f"Debes marcar el MO **MO{mo_number}** como **Done** manualmente en MRPEasy."
-                )
+                # Si está Cancelled (70), avisar que intentamos poner Done (40) y que revise en MRPEasy
+                if status_before_int == 70:
+                    status_note = (
+                        f"\n\nℹ️ El MO estaba en **{status_before_name}** (70). Se intentó cambiar a **Done** (40). "
+                        f"Si en MRPEasy sigue como Cancelled, márcalo como **Done** manualmente. La cantidad ya está guardada en el lote."
+                    )
+                else:
+                    status_note = (
+                        f"\n\n⚠️ El estado del MO sigue en **{status_before_name}** (código {status_before_int}). "
+                        f"Marca el MO **{mo_number}** como **Done** manualmente en MRPEasy si lo necesitas."
+                    )
             
             # Step 4: Save production record
             logger.info(f"Step 4: Saving production record for MO {mo_number}")

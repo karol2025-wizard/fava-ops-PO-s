@@ -1,15 +1,13 @@
 """
-Database Manager - JSON-based implementation
+Database Manager - Hybrid JSON / MySQL
 
-This module provides a backward-compatible interface to DatabaseManager
-using JSON file storage instead of MySQL.
+- For erp_mo_to_import: uses MySQL when configured (config/secrets), else JSON.
+- Other tables: JSON files in data/ (Clover, etc.).
 
 Since MRPeasy is the system of record, this storage is only for:
 - Local analytics (Clover orders)
 - Caching
-- Production records (handled separately via JSONStorage)
-
-All data is stored in JSON files in the data/ directory.
+- Production records (erp_mo_to_import)
 """
 
 import json
@@ -21,33 +19,72 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Lazy import to avoid requiring PyMySQL when using JSON only
+_mysql_backend = None
+
+def _get_mysql_backend():
+    global _mysql_backend
+    if _mysql_backend is None:
+        try:
+            from shared.mysql_backend import (
+                is_mysql_available,
+                execute_mysql,
+                fetch_all_mysql,
+                migrate_json_to_mysql,
+                ERP_MO_TABLE,
+            )
+            _mysql_backend = {
+                "available": is_mysql_available(),
+                "execute_mysql": execute_mysql,
+                "fetch_all_mysql": fetch_all_mysql,
+                "migrate_json_to_mysql": migrate_json_to_mysql,
+                "table": ERP_MO_TABLE,
+            }
+        except Exception as e:
+            logger.debug(f"MySQL backend not used: {e}")
+            _mysql_backend = {"available": False}
+    return _mysql_backend
+
 
 class DatabaseManager:
     """
-    JSON-based database manager that maintains compatibility with MySQL-based code.
-    Uses JSON files for persistence.
+    Hybrid database manager: MySQL for erp_mo_to_import when configured, JSON for the rest.
     """
     
     def __init__(self):
-        """Initialize the JSON-based database manager"""
+        """Initialize: JSON paths always; MySQL for erp_mo_to_import if configured."""
         self.data_dir = Path("data")
         self.clover_dir = self.data_dir / "clover"
         self.clover_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize data structures (in-memory for now, persisted to JSON)
         self.clover_dir = self.data_dir / "clover"
         self.production_dir = self.data_dir / "production"
-        self.clover_dir.mkdir(parents=True, exist_ok=True)
         self.production_dir.mkdir(parents=True, exist_ok=True)
         
-        # Clover orders files
         self._orders_file = self.clover_dir / "orders.json"
         self._items_file = self.clover_dir / "orders_items.json"
         self._modifications_file = self.clover_dir / "orders_items_modifications.json"
         self._payments_file = self.clover_dir / "orders_payments.json"
-        
-        # Production staging files
         self._erp_mo_to_import_file = self.production_dir / "erp_mo_to_import.json"
+        
+        self._erp_mo_migrated_flag = self.production_dir / ".erp_mo_migrated_to_mysql"
+    
+    def _use_mysql_for_erp_mo(self) -> bool:
+        be = _get_mysql_backend()
+        return be.get("available", False)
+    
+    def _migrate_erp_mo_json_to_mysql_once(self):
+        if self._erp_mo_migrated_flag.exists():
+            return
+        be = _get_mysql_backend()
+        if not be.get("available") or "migrate_json_to_mysql" not in be:
+            return
+        n = be["migrate_json_to_mysql"](self._erp_mo_to_import_file)
+        if n >= 0:
+            try:
+                self._erp_mo_migrated_flag.write_text("")
+            except Exception:
+                pass
     
     def _read_json(self, filepath: Path, default: Any = None) -> Any:
         """Read JSON file"""
@@ -127,24 +164,36 @@ class DatabaseManager:
         """
         query_upper = query.strip().upper()
         
-        # CREATE TABLE is a no-op (we don't need tables in JSON)
         if query_upper.startswith('CREATE TABLE'):
             return 0
         
-        # For SELECT queries, they should use fetch_one or fetch_all
         if query_upper.startswith('SELECT'):
             logger.warning(f"SELECT queries should use fetch_one() or fetch_all(), not execute_query()")
             return 0
         
-        # INSERT queries
+        # Route erp_mo_to_import to MySQL when available
+        if self._use_mysql_for_erp_mo():
+            if query_upper.startswith('INSERT') and 'erp_mo_to_import' in query_upper:
+                self._migrate_erp_mo_json_to_mysql_once()
+                try:
+                    be = _get_mysql_backend()
+                    return be["execute_mysql"](query, values)
+                except Exception as e:
+                    logger.warning(f"MySQL INSERT failed, falling back to JSON: {e}")
+            elif query_upper.startswith('UPDATE') and 'erp_mo_to_import' in query_upper:
+                self._migrate_erp_mo_json_to_mysql_once()
+                try:
+                    be = _get_mysql_backend()
+                    return be["execute_mysql"](query, values)
+                except Exception as e:
+                    logger.warning(f"MySQL UPDATE failed, falling back to JSON: {e}")
+        
         if query_upper.startswith('INSERT'):
             return self._execute_insert(query, values)
         
-        # UPDATE queries
         if query_upper.startswith('UPDATE'):
             return self._execute_update(query, values)
         
-        # DELETE queries (simplified handling)
         if query_upper.startswith('DELETE'):
             logger.warning(f"DELETE queries not yet fully supported: {query[:50]}...")
             return 0
@@ -182,6 +231,15 @@ class DatabaseManager:
             
             # Create record dictionary
             record = dict(zip(columns, values_tuple))
+            
+            # Auto-assign id for tables that need it (e.g. erp_mo_to_import) when INSERT omits id
+            if table_name == 'erp_mo_to_import' and 'id' not in record:
+                max_id = 0
+                for rec in records:
+                    rec_id = rec.get('id')
+                    if rec_id is not None and isinstance(rec_id, (int, float)):
+                        max_id = max(max_id, int(rec_id))
+                record['id'] = max_id + 1
             
             # Add inserted_at timestamp if not present and column exists
             if 'inserted_at' not in record:
@@ -347,19 +405,45 @@ class DatabaseManager:
     def _fetch_query(self, query: str, values: Tuple = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Execute a SELECT query and return results.
-        This is a simplified query parser for common SELECT patterns.
+        Uses MySQL for erp_mo_to_import when configured; otherwise JSON.
         """
         query_upper = query.strip().upper()
         
-        # Parse table name from SELECT
         table_match = re.search(r'FROM\s+(\w+)', query_upper)
         if not table_match:
             logger.warning(f"Cannot parse table name from query: {query[:50]}...")
             return []
         
         table_name = table_match.group(1)
+        
+        # Use MySQL for erp_mo_to_import when available
+        if table_name == 'erp_mo_to_import' and self._use_mysql_for_erp_mo():
+            self._migrate_erp_mo_json_to_mysql_once()
+            try:
+                be = _get_mysql_backend()
+                rows = be.get("fetch_all_mysql")(query, values)
+                if rows is not None:
+                    return rows
+            except Exception as e:
+                logger.warning(f"MySQL fetch failed, falling back to JSON: {e}")
+        
         filepath = self._get_table_file(table_name)
         records = self._read_json(filepath, [])
+        
+        if table_name == 'erp_mo_to_import' and records:
+            max_id = 0
+            for rec in records:
+                rid = rec.get('id')
+                if rid is not None and isinstance(rid, (int, float)):
+                    max_id = max(max_id, int(rid))
+            need_save = False
+            for rec in records:
+                if rec.get('id') is None:
+                    max_id += 1
+                    rec['id'] = max_id
+                    need_save = True
+            if need_save:
+                self._write_json(filepath, records)
         
         # Simple WHERE clause parsing (very basic)
         if 'WHERE' in query_upper:
@@ -431,17 +515,17 @@ class DatabaseManager:
                         
                         records = filtered_records
         
-        # Simple ORDER BY parsing
+        # Simple ORDER BY parsing (handle None so sort doesn't raise)
         if 'ORDER BY' in query_upper:
             order_match = re.search(r'ORDER BY\s+(\w+)\s+(ASC|DESC)?', query_upper, re.IGNORECASE)
             if order_match:
                 column = order_match.group(1)
                 direction = (order_match.group(2) or 'ASC').upper()
-                
-                records.sort(
-                    key=lambda x: x.get(column),
-                    reverse=(direction == 'DESC')
-                )
+                # Put None last: (has_value, value) so None is (False, None) and sorts last when DESC
+                def _order_key(row):
+                    val = row.get(column)
+                    return (val is not None, val if val is not None else '')
+                records.sort(key=_order_key, reverse=(direction == 'DESC'))
         
         # LIMIT
         if limit or 'LIMIT' in query_upper:

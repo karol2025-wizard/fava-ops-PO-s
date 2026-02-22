@@ -94,43 +94,67 @@ class MOUpdate:
                 return False, None, error_msg
             
             # Verify lot code matches (if target_lots exist)
-            target_lots = current_mo.get('target_lots', [])
+            target_lots = current_mo.get('target_lots', []) or []
             lot_code_found = False
             if target_lots:
                 for lot in target_lots:
-                    if lot.get('code', '').strip().upper() == lot_code.strip().upper():
+                    if (lot.get('code') or '').strip().upper() == lot_code.strip().upper():
                         lot_code_found = True
                         break
                 if not lot_code_found:
-                    error_msg = (
-                        f"Lot code {lot_code} does not match any target lot "
-                        f"in MO {mo_id}. Target lots: {[l.get('code') for l in target_lots]}"
+                    logger.warning(
+                        f"Lot code {lot_code} does not match any target lot in MO {mo_id}. "
+                        f"Target lots: {[l.get('code') for l in target_lots]}"
                     )
-                    logger.warning(error_msg)
-                    # Continue anyway - might be a new lot or different scenario
             
-            # Update the stock lot directly with the produced quantity
-            # MRPEasy doesn't have 'actual_quantity' field on MO - we update the lot instead
-            lot_updated = False
-            if target_lots:
-                for lot in target_lots:
-                    lot_code_in_mo = lot.get('code', '').strip()
-                    if lot_code_in_mo.upper() == lot_code.strip().upper():
-                        lot_id = lot.get('lot_id')
-                        if lot_id:
-                            logger.info(f"Updating lot {lot_id} ({lot_code}) with quantity {actual_quantity}")
-                            lot_response = self.api.update_stock_lot_quantity(lot_id, actual_quantity)
-                            if lot_response.status_code in [200, 202, 204]:
-                                lot_updated = True
-                                logger.info(f"Successfully updated lot {lot_id} with quantity {actual_quantity}")
-                            else:
-                                logger.warning(f"Failed to update lot {lot_id}: {lot_response.status_code}, {lot_response.text}")
-                        break
+            # PRIMARY: Update the stock lot quantity (this is what MRPEasy shows on the MO row)
+            lot_id = None
+            for lot in target_lots:
+                if (lot.get('code') or '').strip().upper() == lot_code.strip().upper():
+                    lot_id = (
+                        lot.get('lot_id') or lot.get('id')
+                        or lot.get('lotId')  # camelCase
+                        or lot.get('stock_lot_id')
+                    )
+                    break
+            if not lot_id:
+                # Fallback: get lot by code from API (MO target_lots may use different key names)
+                lot_by_code = self.api.get_single_lot(lot_code.strip())
+                if not lot_by_code and lot_code.strip().upper().startswith("L"):
+                    lot_by_code = self.api.get_single_lot(lot_code.strip()[1:])  # try without L
+                if lot_by_code:
+                    lot_id = (
+                        lot_by_code.get('lot_id') or lot_by_code.get('id')
+                        or lot_by_code.get('lotId') or lot_by_code.get('stock_lot_id')
+                    )
+                if not lot_id:
+                    logger.warning(
+                        f"Could not resolve lot_id for lot {lot_code}. "
+                        f"target_lots keys sample: {list(target_lots[0].keys()) if target_lots else 'no target_lots'}."
+                    )
             
-            if not lot_updated:
-                logger.warning(f"Could not update lot {lot_code} - lot not found in MO target_lots")
+            lot_update_success = False
+            if lot_id:
+                try:
+                    lot_id_int = int(lot_id)
+                    logger.info(f"Updating lot {lot_id_int} ({lot_code}) with quantity {actual_quantity}")
+                    lot_response = self.api.update_stock_lot_quantity(lot_id_int, actual_quantity)
+                    if lot_response and lot_response.status_code in [200, 202, 204]:
+                        lot_update_success = True
+                        logger.info(f"Lot {lot_code} updated with quantity {actual_quantity}")
+                    else:
+                        logger.warning(
+                            f"Lot update returned {getattr(lot_response, 'status_code', None)}: {getattr(lot_response, 'text', '')}"
+                        )
+                except (ValueError, RuntimeError) as e:
+                    logger.warning(f"Lot update failed: {e}", exc_info=True)
+                except Exception as e:
+                    logger.warning(f"Lot update failed: {e}", exc_info=True)
             
-            # Update MO with quantity and status 40 (Done)
+            if not lot_update_success and not lot_id:
+                logger.warning("No lot_id available; only MO update will be attempted (may not change quantity in UI).")
+            
+            # SECONDARY: Update MO (API may ignore actual_quantity; lot update is what reflects in MRPEasy)
             response = self.api.update_manufacturing_order(
                 mo_id=mo_id,
                 actual_quantity=actual_quantity,
@@ -180,27 +204,36 @@ class MOUpdate:
             logger.info(f"Closing MO {mo_id} after update")
             close_success, close_message = self.close_manufacturing_order(mo_id)
             
-            if lot_updated:
-                status_ok = response.status_code in [200, 202, 204]
-                status_note = (
-                    "" if status_ok else
-                    " Marca el MO como **Done** manualmente en MRPeasy (la API no permite cambiar el estado)."
+            # Consider success if HTTP 2xx, or if 400 was only due to "Status cannot be changed" (quantity may still be updated)
+            status_ok = response.status_code in [200, 202, 204] or status_rejected_by_api
+            if not status_ok:
+                error_msg = (
+                    f"Failed to update MO {mo_id} with actual quantity. "
+                    f"Status: {response.status_code}, Response: {response.text}"
                 )
+                logger.error(error_msg)
+                return False, None, error_msg
+            
+            status_note = (
+                "" if status_ok else
+                " Marca el MO como Done manualmente en MRPEasy (la API no permite cambiar el estado)."
+            )
+            
+            # Build success message (lot update is what makes quantity appear in MRPEasy)
+            if lot_update_success:
                 success_msg = (
-                    f"Lot {lot_code} actualizado con cantidad {actual_quantity} "
-                    f"para MO {updated_data['mo_number']}."
+                    f"Lot {lot_code} y MO {updated_data['mo_number']} actualizados con cantidad {actual_quantity}. "
+                    f"Revisa en MRPEasy que la cantidad se vea correcta."
                     f"{status_note}"
                 )
-                logger.info(success_msg)
             else:
                 success_msg = (
-                    f"MO {updated_data['mo_number']} encontrado para LOT {lot_code}. "
-                    f"No se pudo actualizar el lot; verifica que esté asociado al MO."
+                    f"MO {updated_data['mo_number']} registrado con cantidad {actual_quantity} para LOT {lot_code}. "
+                    f"Si la cantidad no se actualizó en MRPEasy, la API puede no permitir actualizar el lote: "
+                    f"introduce la cantidad manualmente en el MO o en el lote {lot_code} en MRPEasy."
+                    f"{status_note}"
                 )
-                if status_rejected_by_api:
-                    success_msg += " Marca el MO como Done manualmente en MRPeasy."
-                logger.warning(success_msg)
-            
+            logger.info(success_msg)
             return True, updated_data, success_msg
             
         except Exception as e:
@@ -247,4 +280,3 @@ class MOUpdate:
             error_msg = f"Error closing MO {mo_id}: {str(e)}"
             logger.error(error_msg, exc_info=True)
             return False, error_msg
-

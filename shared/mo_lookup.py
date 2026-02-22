@@ -51,12 +51,55 @@ class MOLookup:
             return False, None, error_msg
         
         lot_code = lot_code.strip()
-        logger.info(f"Searching for MO with lot code: {lot_code}")
+        # Normalize: MRPeasy uses "L" prefix (e.g. L33126). Accept "33126" or "L33126"
+        possible_codes = {lot_code.upper()}
+        if lot_code.upper().startswith("L") and len(lot_code) > 1:
+            possible_codes.add(lot_code.upper()[1:])  # without L
+        else:
+            possible_codes.add(("L" + lot_code).upper())
+        logger.info(f"Searching for MO with lot code: {lot_code} (trying: {possible_codes})")
         
         try:
-            # Fetch all manufacturing orders
-            # Note: This could be optimized with a filter if MRPeasy API supports it
-            # IMPORTANT: This fetches ALL manufacturing orders, which can be slow and hit rate limits
+            # Fast path: get lot by code (1 call); if lot has MO id, get MO details (1 call) instead of fetching all MOs
+            codes_to_try = [lot_code]
+            if not lot_code.upper().startswith("L"):
+                codes_to_try.append("L" + lot_code)
+            elif len(lot_code) > 1:
+                codes_to_try.append(lot_code[1:])
+            for code in codes_to_try:
+                lot_data = self.api.get_single_lot(code)
+                if not lot_data:
+                    continue
+                mo_id = (
+                    lot_data.get("man_ord_id")
+                    or lot_data.get("manufacturing_order_id")
+                    or lot_data.get("mo_id")
+                    or lot_data.get("man_order_id")
+                )
+                if mo_id is not None:
+                    try:
+                        mo_id = int(mo_id)
+                    except (TypeError, ValueError):
+                        continue
+                    mo = self.api.get_manufacturing_order_details(mo_id)
+                    if mo:
+                        matched_lot_code = (lot_data.get("code") or "").strip() or lot_code
+                        mo_data = {
+                            "mo_number": mo.get("code", "N/A"),
+                            "mo_id": mo.get("man_ord_id"),
+                            "item_code": mo.get("item_code", "N/A"),
+                            "item_title": mo.get("item_title", "N/A"),
+                            "status": mo.get("status", "N/A"),
+                            "expected_output": mo.get("quantity", 0),
+                            "expected_output_unit": mo.get("unit", ""),
+                            "lot_code": matched_lot_code,
+                        }
+                        logger.info(f"Fast path: MO {mo_data['mo_number']} from lot API (mo_id={mo_id})")
+                        return True, mo_data, f"Found Manufacturing Order: {mo_data['mo_number']} for Item: {mo_data['item_code']}"
+                    break  # lot had mo_id but get_manufacturing_order_details failed; fall back to slow path
+                break  # only try first code that returns a lot without mo_id
+
+            # Slow path: fetch all manufacturing orders and filter by target_lots
             try:
                 all_mos = self.api.fetch_manufacturing_orders()
             except ValueError as ve:
@@ -85,13 +128,13 @@ class MOLookup:
                 logger.error(error_msg)
                 return False, None, error_msg
             
-            # Filter MOs that have the lot code in their target_lots
+            # Filter MOs that have the lot code in their target_lots (with L prefix normalization)
             matching_mos = []
             for mo in all_mos:
                 target_lots = mo.get('target_lots', [])
                 for lot in target_lots:
-                    lot_code_in_mo = lot.get('code', '').strip()
-                    if lot_code_in_mo.upper() == lot_code.upper():
+                    lot_code_in_mo = (lot.get('code') or '').strip()
+                    if lot_code_in_mo.upper() in possible_codes:
                         matching_mos.append(mo)
                         break  # Found match, no need to check other lots in this MO
             
@@ -114,7 +157,13 @@ class MOLookup:
             
             # Success: Exactly one match
             mo = matching_mos[0]
-            
+            # Use the lot code as stored in MRPeasy (e.g. L33126) for consistency
+            matched_lot_code = lot_code
+            for lot in mo.get('target_lots', []):
+                lc = (lot.get('code') or '').strip()
+                if lc.upper() in possible_codes:
+                    matched_lot_code = lc
+                    break
             # Extract required information
             mo_data = {
                 'mo_number': mo.get('code', 'N/A'),
@@ -124,7 +173,7 @@ class MOLookup:
                 'status': mo.get('status', 'N/A'),
                 'expected_output': mo.get('quantity', 0),
                 'expected_output_unit': mo.get('unit', ''),
-                'lot_code': lot_code
+                'lot_code': matched_lot_code
             }
             
             success_msg = (
