@@ -7,12 +7,15 @@ Flujo (igual que el .exe):
 3. Se guarda en la base de datos → aparece en **ERP Close MO**.
 4. En ERP Close MO seleccionas y cierras los MO en lote.
 
-Al registrar se guarda en la base y se cierra el MO en MRPEasy automáticamente.
+Al registrar se guarda en la base, se actualiza la cantidad en MRPEasy y se cierra el MO (estado Done)
+usando el mismo servicio que ERP Close MO; la fila queda marcada como procesada (processed_at).
 """
 
 import streamlit as st
 import sys
 import os
+import requests
+from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.weightlabelprinter_helper import insert_production_quantity, get_label_printer_quantity
@@ -21,11 +24,91 @@ from shared.database_manager import DatabaseManager
 from shared.api_manager import APIManager
 from shared.mo_lookup import MOLookup
 
+try:
+    from config import secrets
+except Exception:
+    secrets = {}
+
 st.set_page_config(
     page_title="MO Record Insert - Lot y cantidad del sticker",
     page_icon="📋",
     layout="centered",
 )
+
+
+def _get_last_inserted_id_for_lot(lot_code: str):
+    """Return the id of the most recently inserted row in erp_mo_to_import for this lot_code."""
+    try:
+        db = DatabaseManager()
+        row = db.fetch_one(
+            "SELECT id FROM erp_mo_to_import WHERE lot_code = %s ORDER BY id DESC LIMIT 1",
+            (lot_code.strip(),),
+        )
+        return row["id"] if row and row.get("id") is not None else None
+    except Exception:
+        return None
+
+
+def _mark_order_processed(order_id) -> bool:
+    """Set processed_at for one row in erp_mo_to_import. Returns True if updated."""
+    if order_id is None:
+        return False
+    try:
+        db = DatabaseManager()
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        n = db.execute_query(
+            "UPDATE erp_mo_to_import SET processed_at = %s WHERE id = %s AND processed_at IS NULL",
+            (current_time, order_id),
+        )
+        return n > 0
+    except Exception:
+        return False
+
+
+def _is_service_url_invalid(server_url: str) -> bool:
+    """True if URL looks like MRPEasy web app instead of the automation service (e.g. Cloud Run)."""
+    if not server_url or not server_url.strip():
+        return True
+    s = server_url.strip().lower()
+    # La URL debe ser del servicio que expone /process_mo (ej. https://xxx.run.app), NO la web de MRPEasy
+    if "app.mrpeasy.com" in s or "mrpeasy.com/accounting" in s:
+        return True
+    return False
+
+
+def _close_mo_via_service(server_url: str, lot_code: str, quantity: float):
+    """
+    Call the same process_mo endpoint used by ERP Close MO to set MO status to Done.
+    Returns (success, message).
+    """
+    if not (server_url and str(server_url).strip()):
+        return False, "URL del servicio no configurada"
+    if _is_service_url_invalid(server_url):
+        return False, (
+            "La URL en secrets apunta a la web de MRPEasy, no al servicio de cierre. "
+            "Pon la URL del servicio que usa ERP Close MO (ej. https://tu-servicio.run.app)."
+        )
+    url = server_url.rstrip("/") + "/process_mo"
+    payload = {"orders": [{"lot_number": lot_code, "quantity": float(quantity)}]}
+    try:
+        resp = requests.post(
+            url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=300,
+        )
+        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        results = data.get("results") or []
+        for r in results:
+            if (r.get("lot_number") or "").strip() == lot_code.strip():
+                if r.get("success"):
+                    return True, "MO cerrado (estado Done)."
+                return False, r.get("error", "Error desconocido")
+        if resp.status_code in (200, 201, 202, 204):
+            return True, "MO cerrado (estado Done)."
+        return False, data.get("error") or f"HTTP {resp.status_code}"
+    except Exception as e:
+        return False, str(e)
 
 # Claves auxiliares: copiamos a los keys de los widgets ANTES de crear el form
 # (Streamlit no permite modificar el key de un widget después de crearlo).
@@ -117,8 +200,17 @@ st.caption(
     "para cerrar los MO en lote (mismo flujo que MORecordInsert.exe)."
 )
 st.info(
-    "Al pulsar **Registrar** se guarda en la base de datos y se actualiza el MO en MRPEasy automáticamente."
+    "Al pulsar **Registrar** se guarda en la base de datos, se actualiza la cantidad en MRPEasy y se marca el MO como **Done** (mismo flujo que ERP Close MO)."
 )
+# Avisar si la URL del servicio de cierre está mal (ej. apunta a la web de MRPEasy en vez del servicio)
+_server_url = secrets.get("mrpeasy-could-run-po-automation-service-url") or secrets.get("mrpeasy_cloud_run_po_automation_service_url") or ""
+if _server_url and _is_service_url_invalid(_server_url):
+    st.error(
+        "**Configuración:** La URL del servicio de cierre en secrets apunta a la **página web de MRPEasy**. "
+        "Para que el estado pase a **Done** al registrar, pon en **.streamlit/secrets.toml** la clave "
+        "**mrpeasy-could-run-po-automation-service-url** con la URL del **servicio** que usa ERP Close MO "
+        "(ej. `https://tu-servicio.run.app`), no un enlace a app.mrpeasy.com."
+    )
 
 # Hint para uso con escáner de código de barras
 st.markdown("""
@@ -231,14 +323,15 @@ if lookup_clicked:
             if printer_q is not None and printer_q > 0:
                 source_used = f"Impresora de etiquetas ({printer_q} {printer_u or ''})"
         if ok and mo_data:
-            # Prioridad: impresora (8 tray) > DB > lote MRPEasy > expected_output del MO (1)
+            # Prioridad: impresora > DB > lote MRPEasy > expected_output del MO (no usar MO primero)
+            u = (mo_data.get("expected_output_unit") or "").strip()
             if printer_q is not None and printer_q > 0:
-                q, u = printer_q, (printer_u or "").strip() or (mo_data.get("expected_output_unit") or "").strip()
+                q = printer_q
+                u = (printer_u or "").strip() or u
                 if not source_used:
                     source_used = f"Impresora de etiquetas ({q} {u or ''})"
             else:
-                q = mo_data.get("expected_output")
-                u = (mo_data.get("expected_output_unit") or "").strip()
+                q = None
             # 2) Total Entries en nuestra base (suma por lote) si no vino de la impresora
             if q is None or (isinstance(q, (int, float)) and q == 0):
                 try:
@@ -257,7 +350,7 @@ if lookup_clicked:
                             u = (rows[0].get("uom") or "").strip()
                 except Exception:
                     pass
-            # 3) Si no hay total en nuestra base, usar cantidad del lote en MRPEasy
+            # 3) Si aun no hay cantidad, usar la del lote en MRPEasy (produced/received)
             if q is None or (isinstance(q, (int, float)) and q == 0):
                 try:
                     api = APIManager()
@@ -276,7 +369,7 @@ if lookup_clicked:
                             u = (lot_data.get("unit") or "").strip()
                 except Exception:
                     pass
-            # 4) Fallback: cantidad esperada del MO
+            # 4) Ultimo recurso: cantidad esperada del MO (suele ser 1)
             if (q is None or (isinstance(q, (int, float)) and q == 0)) and mo_data.get("expected_output"):
                 q = mo_data.get("expected_output")
                 if not source_used:
@@ -393,7 +486,10 @@ if submitted:
         if not saved:
             st.error("No se pudo guardar en la base de datos. Revisa los logs.")
         else:
-            # 2) Actualizar MRPEasy con la misma cantidad (Cantidad del sticker)
+            # ID del registro recién insertado (para marcar processed_at tras cerrar el MO)
+            inserted_id = _get_last_inserted_id_for_lot(lot)
+
+            # 2) Actualizar MRPEasy (cantidad + intento de poner estado Done por API — nuestro "cerrar MO" interno)
             with st.spinner(f"Actualizando MO en MRPEasy con cantidad {qty}..."):
                 workflow = ProductionWorkflow()
                 success, result_data, message = workflow.process_production_completion(
@@ -402,6 +498,21 @@ if submitted:
                     uom=uom_val,
                     item_code=None,
                 )
+
+            # ¿Nuestro intento por API puso ya el estado a Done?
+            status_set_done_via_api = bool(result_data and (result_data.get("mo_update") or {}).get("status_set_done"))
+
+            # 3) Si la API no aceptó Done, intentar cerrar con el servicio externo (ERP Close MO)
+            server_url = secrets.get("mrpeasy-could-run-po-automation-service-url") or secrets.get("mrpeasy_cloud_run_po_automation_service_url") or ""
+            close_success, close_message = status_set_done_via_api, ("MO cerrado (estado Done)." if status_set_done_via_api else None)
+            if status_set_done_via_api and inserted_id is not None:
+                _mark_order_processed(inserted_id)
+            elif server_url and not _is_service_url_invalid(server_url):
+                with st.spinner("Cerrando MO en MRPEasy (estado Done)..."):
+                    close_success, close_message = _close_mo_via_service(server_url, lot, qty)
+                if close_success and inserted_id is not None:
+                    _mark_order_processed(inserted_id)
+
             # Guardar mensajes de éxito, limpiar formulario y rerun para dejar listo el siguiente escaneo
             st.session_state["mo_success_messages"] = {
                 "db_ok": True,
@@ -410,6 +521,8 @@ if submitted:
                 "result_data": result_data,
                 "lot": lot,
                 "uom_val": uom_val,
+                "close_mo_success": close_success,
+                "close_mo_message": close_message,
             }
             st.session_state["mo_clear_form_after_success"] = True
             st.rerun()
@@ -419,6 +532,17 @@ if "mo_success_messages" in st.session_state:
     sm = st.session_state["mo_success_messages"]
     st.success("✅ Registro guardado en la base de datos.")
     st.balloons()
+    if sm.get("close_mo_success"):
+        st.success(f"✅ **Estado en MRPEasy:** {sm.get('close_mo_message', 'MO cerrado (Done).')}")
+    elif sm.get("close_mo_message") is not None:
+        st.warning(
+            f"⚠️ **Las cantidades se guardaron, pero el estado no se cambió a Done.**\n\n"
+            f"{sm['close_mo_message']}\n\n"
+            "**Para que el MO pase de «Not booked» a Done:** (1) Configura en **.streamlit/secrets.toml** la clave "
+            "**mrpeasy-could-run-po-automation-service-url** con la URL **del servicio** que usa ERP Close MO "
+            "(ej. `https://tu-servicio.run.app`), **no** la página web de MRPEasy. (2) O marca el MO como Done manualmente en MRPEasy. "
+            "(3) O procesa este registro desde **ERP Close MO** cuando el servicio esté bien configurado."
+        )
     if sm.get("workflow_success"):
         st.success(f"✅ {sm['workflow_message']}")
         result_data = sm.get("result_data")

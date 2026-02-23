@@ -125,10 +125,13 @@ class ProductionWorkflow:
             
             status_after = updated_mo_data.get('status')
             
-            # Check if status actually changed (MRPEasy API may not allow status changes)
+            # Check if status actually changed (by API response or by our try_set_mo_status_done)
             status_before_int = int(status_before) if status_before else None
             status_after_int = int(status_after) if status_after else None
-            status_changed = (status_before_int != status_after_int and status_after_int == 40)  # 40 = Done
+            status_changed = (
+                updated_mo_data.get('status_set_done') is True
+                or (status_before_int != status_after_int and status_after_int == 40)
+            )  # 40 = Done
             
             status_note = ""
             if not status_changed:

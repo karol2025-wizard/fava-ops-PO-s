@@ -233,7 +233,7 @@ def _get_label_printer_mysql_config() -> Optional[Dict[str, Any]]:
     def _from(s):
         if not s:
             return None
-        # Opcional: MySQL solo para impresora (ej. base "starship" en DigitalOcean)
+        # weightlabelprinter_mysql_* tiene prioridad (base "starship" del .exe)
         host = s.get("weightlabelprinter_mysql_host") or s.get("mysql_host") or s.get("starship_db_host")
         port = int(s.get("weightlabelprinter_mysql_port") or s.get("mysql_port") or s.get("starship_db_port") or 3306)
         user = s.get("weightlabelprinter_mysql_user") or s.get("mysql_user") or s.get("starship_db_user")
@@ -256,7 +256,22 @@ def _get_label_printer_mysql_config() -> Optional[Dict[str, Any]]:
         pass
     try:
         from config import secrets
-        return _from(secrets)
+        cfg = _from(secrets)
+        if cfg:
+            return cfg
+    except Exception:
+        pass
+    # Fallback: mismo DB que el .exe (credentials/config.py DB_CONFIG) — no poner password en git
+    try:
+        from credentials.config import DB_CONFIG
+        if DB_CONFIG and DB_CONFIG.get("host") and DB_CONFIG.get("user") and DB_CONFIG.get("database"):
+            return {
+                "host": DB_CONFIG["host"],
+                "port": int(DB_CONFIG.get("port", 3306)),
+                "user": DB_CONFIG["user"],
+                "password": DB_CONFIG.get("password", ""),
+                "database": DB_CONFIG["database"],
+            }
     except Exception:
         pass
     return None

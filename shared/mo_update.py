@@ -154,13 +154,25 @@ class MOUpdate:
             if not lot_update_success and not lot_id:
                 logger.warning("No lot_id available; only MO update will be attempted (may not change quantity in UI).")
             
-            # SECONDARY: Update MO (API may ignore actual_quantity; lot update is what reflects in MRPEasy)
+            # SECONDARY: Update MO with quantity only (API rejects if we send status in same request)
             response = self.api.update_manufacturing_order(
                 mo_id=mo_id,
                 actual_quantity=actual_quantity,
-                status=self.STATUS_DONE,  # 40 = Done
+                status=None,  # do not send; we try status in a separate request below
                 lot_code=lot_code
             )
+            
+            # TERTIARY: Try to set status to Done (40). If MO is in 15 (Not Scheduled), try transition 15→20→30→40 first.
+            status_set_done = False
+            try:
+                current_status = current_mo.get('status')
+                current_status_int = int(current_status) if current_status is not None else None
+                if current_status_int == self.STATUS_NOT_SCHEDULED:  # 15
+                    status_set_done, _ = self.api.try_set_mo_status_transition_15_to_40(mo_id)
+                else:
+                    status_set_done, _ = self.api.try_set_mo_status_done(mo_id, self.STATUS_DONE)
+            except Exception:
+                pass
             
             # Check if update was successful (200 OK, 202 Accepted, 204 No Content)
             status_rejected_by_api = (
@@ -180,7 +192,7 @@ class MOUpdate:
                     f"Lot {lot_code} update attempted; change status to Done manually in MRPeasy."
                 )
             
-            # Fetch updated MO details
+            # Fetch updated MO details (after optional status=Done PUT)
             updated_mo = self.api.get_manufacturing_order_details(mo_id)
             if not updated_mo:
                 # Update might have succeeded but fetch failed
@@ -195,13 +207,15 @@ class MOUpdate:
                 'item_title': updated_mo.get('item_title', 'N/A'),
                 'expected_output': current_mo.get('quantity', 0),
                 'actual_quantity': actual_quantity,
-                'status': updated_mo.get('status', status),
+                'status': updated_mo.get('status', self.STATUS_DONE),
                 'lot_code': lot_code,
-                'updated_at': updated_mo.get('updated_at') or updated_mo.get('modified_at')
+                'updated_at': updated_mo.get('updated_at') or updated_mo.get('modified_at'),
+                'status_set_done': status_set_done,
             }
             
-            # Close the manufacturing order after updating
-            logger.info(f"Closing MO {mo_id} after update")
+            # Consider closed when we set status to Done via API, or when quantity was updated (legacy message)
+            if not status_set_done:
+                logger.info(f"MO {mo_id} quantity updated; status could not be set to Done via API.")
             close_success, close_message = self.close_manufacturing_order(mo_id)
             
             # Consider success if HTTP 2xx, or if 400 was only due to "Status cannot be changed" (quantity may still be updated)
@@ -215,7 +229,7 @@ class MOUpdate:
                 return False, None, error_msg
             
             status_note = (
-                "" if status_ok else
+                " Estado actualizado a Done." if status_set_done else
                 " Marca el MO como Done manualmente en MRPEasy (la API no permite cambiar el estado)."
             )
             

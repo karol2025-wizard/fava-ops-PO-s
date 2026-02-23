@@ -573,7 +573,59 @@ class APIManager:
             print(f"Failed to update manufacturing order {mo_id}. Status: {response.status_code}, Response: {response.text}")
         
         return response
-    
+
+    def try_set_mo_status(self, mo_id: int, status: int) -> tuple[bool, str]:
+        """
+        Try to set manufacturing order status to a given code via PUT with only status.
+        Used for single-step or multi-step transitions (e.g. 15 → 20 → 30 → 40).
+        Returns (success, message).
+        """
+        try:
+            response = requests.put(
+                f"{self.base_url}/manufacturing-orders/{mo_id}",
+                auth=self.auth,
+                headers={"content-type": "application/json"},
+                json={"status": status},
+            )
+            if response.status_code in (200, 202, 204):
+                return True, "Estado actualizado."
+            if response.status_code == 400 and response.text and "status" in response.text.lower():
+                return False, "La API de MRPEasy no permite este cambio de estado."
+            return False, f"API devolvió {response.status_code}: {response.text[:200]}"
+        except Exception as e:
+            return False, str(e)
+
+    def try_set_mo_status_done(self, mo_id: int, status: int = 40) -> tuple[bool, str]:
+        """
+        Try to set manufacturing order status to Done (40) via a second PUT with only status.
+        MRPEasy may reject status changes (400); this is a best-effort attempt so we can
+        close MOs without an external automation service.
+        If the API keeps rejecting: alternatives are (1) external process_mo service,
+        (2) manual Done in MRPEasy, (3) future: browser automation (Playwright) to open
+        MO → Production → Receive/Done.
+        Returns (success, message).
+        """
+        return self.try_set_mo_status(mo_id, status)
+
+    def try_set_mo_status_transition_15_to_40(self, mo_id: int) -> tuple[bool, str]:
+        """
+        Try to transition MO from status 15 (Not Scheduled) to 40 (Done) by sending
+        intermediate statuses 20 (Scheduled), 30 (In Progress), then 40 (Done).
+        MRPeasy API may reject direct 15→40; stepping through 20 and 30 can succeed.
+        Returns (success, message). Success is True only if status 40 was accepted.
+        """
+        # MRPeasy status codes: 15=Not Scheduled, 20=Scheduled, 30=In Progress, 40=Done
+        steps = [20, 30, 40]
+        last_ok = False
+        last_msg = ""
+        for s in steps:
+            last_ok, last_msg = self.try_set_mo_status(mo_id, s)
+            if not last_ok:
+                # Optional: continue to next step anyway (some APIs only accept 40)
+                if s == 40:
+                    return False, last_msg
+        return last_ok, last_msg if last_ok else "Estado actualizado a Done."
+
     def get_lot_details(self, lot_code: str) -> Optional[Dict]:
         """Get details for a specific lot"""
         lots = self.fetch_stock_lots()
@@ -640,14 +692,16 @@ class APIManager:
                 headers={'content-type': 'application/json'}
             )
 
-            if response.status_code == 200:
-                lots = response.json()
-                # Return the first (and should be only) lot matching the code
-                return lots[0] if lots else None
+            if response.status_code in (200, 206):
+                data = response.json()
+                # API puede devolver lista directa o dict con clave "data"/"results"
+                lots = data if isinstance(data, list) else (data.get("data") or data.get("results") or [])
+                if isinstance(lots, list) and lots:
+                    return lots[0]
             return None
         except Exception:
             return None
-    
+
     def update_stock_lot_quantity(self, lot_id: int, quantity: float) -> requests.Response:
         """
         Update a stock lot with received/produced quantity.
