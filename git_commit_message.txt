@@ -1,5 +1,0 @@
-En esta versión funciona el Lookup con las cantidades correctas y la actualización de cantidades en MRPEasy.
-
-- Lookup: prioridad impresora (Total Entries) sobre expected_output del MO; búsqueda de MO con MOLookup.
-- MRPEasy: actualización de cantidad del MO solo con campo quantity (sin status) para que la API acepte el cambio.
-- label_printer_history.json: entrada L33118 (8 tray) para pruebas.

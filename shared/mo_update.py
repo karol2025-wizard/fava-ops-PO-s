@@ -216,7 +216,15 @@ class MOUpdate:
             # Consider closed when we set status to Done via API, or when quantity was updated (legacy message)
             if not status_set_done:
                 logger.info(f"MO {mo_id} quantity updated; status could not be set to Done via API.")
-            close_success, close_message = self.close_manufacturing_order(mo_id)
+            close_success, close_message, playwright_error, playwright_closed = self.close_manufacturing_order(
+                mo_id,
+                lot_code=lot_code,
+                actual_quantity=actual_quantity,
+                mo_number=updated_data.get('mo_number'),
+            )
+            if playwright_error:
+                updated_data['playwright_error'] = playwright_error
+            updated_data['playwright_closed'] = playwright_closed
             
             # Consider success if HTTP 2xx, or if 400 was only due to "Status cannot be changed" (quantity may still be updated)
             status_ok = response.status_code in [200, 202, 204] or status_rejected_by_api
@@ -255,42 +263,67 @@ class MOUpdate:
             logger.error(error_msg, exc_info=True)
             return False, None, error_msg
     
-    def close_manufacturing_order(self, mo_id: int) -> Tuple[bool, str]:
+    def close_manufacturing_order(
+        self,
+        mo_id: int,
+        lot_code: Optional[str] = None,
+        actual_quantity: Optional[float] = None,
+        mo_number: Optional[str] = None,
+    ) -> Tuple[bool, str, Optional[str], bool]:
         """
         Consider a Manufacturing Order "closed" after actual_quantity was set.
-        
-        MRPeasy API does NOT allow changing "status" via API (returns 400).
-        So we do not make a second update. Once actual_quantity is set, we consider
-        the order updated; MRPeasy may show it as Done/Received in the UI when actual
-        quantity is present.
-        
-        Args:
-            mo_id: Manufacturing Order ID
-        
+        If Playwright is enabled in secrets and API did not set Done, tries to close via browser.
+
         Returns:
-            Tuple of (success, message)
+            Tuple of (success, message, playwright_error or None, playwright_closed: bool)
         """
         if not mo_id:
-            error_msg = "Manufacturing Order ID is required"
-            logger.error(error_msg)
-            return False, error_msg
-        
+            logger.error("Manufacturing Order ID is required")
+            return False, "Manufacturing Order ID is required", None, False
+
+        playwright_error: Optional[str] = None
+        playwright_closed = False
         try:
             current_mo = self.api.get_manufacturing_order_details(mo_id)
             if not current_mo:
-                error_msg = f"Manufacturing Order {mo_id} not found"
-                logger.error(error_msg)
-                return False, error_msg
-            
-            mo_number = current_mo.get('code', str(mo_id))
-            # Consider closed when actual_quantity is set (no status change via API)
+                return False, f"Manufacturing Order {mo_id} not found", None, False
+
+            mo_code = mo_number or current_mo.get('code', str(mo_id))
+
+            # Intentar cierre por Playwright si está habilitado y tenemos lot y cantidad
+            enabled = False
+            try:
+                import streamlit as st
+                if hasattr(st, "secrets") and st.secrets:
+                    enabled = bool(st.secrets.get("mrpeasy_playwright_enabled", False))
+            except Exception:
+                pass
+
+            if enabled and lot_code and actual_quantity is not None:
+                try:
+                    from shared.mrpeasy_playwright_close import close_mo_via_playwright
+                    success, msg = close_mo_via_playwright(
+                        mo_id=mo_id,
+                        lot_code=lot_code,
+                        quantity=actual_quantity,
+                        mo_number=mo_code,
+                    )
+                    if success:
+                        logger.info("Playwright cerró el MO: %s", msg)
+                        return True, msg, None, True
+                    playwright_error = msg
+                    logger.warning("Playwright no cerró el MO: %s", msg)
+                except Exception as e:
+                    playwright_error = str(e)
+                    logger.warning("Playwright no cerró el MO: %s", e)
+
             success_msg = (
-                f"Manufacturing Order {mo_number} updated with actual quantity. "
-                f"(Status cannot be changed via API; update in MRPeasy UI if needed.)"
+                f"Manufacturing Order {mo_code} updated with actual quantity. "
+                "(Status cannot be changed via API; update in MRPeasy UI if needed.)"
             )
             logger.info(success_msg)
-            return True, success_msg
+            return True, success_msg, playwright_error, playwright_closed
         except Exception as e:
             error_msg = f"Error closing MO {mo_id}: {str(e)}"
             logger.error(error_msg, exc_info=True)
-            return False, error_msg
+            return False, error_msg, None, False

@@ -501,17 +501,23 @@ if submitted:
 
             # ¿Nuestro intento por API puso ya el estado a Done?
             status_set_done_via_api = bool(result_data and (result_data.get("mo_update") or {}).get("status_set_done"))
+            mo_update = (result_data or {}).get("mo_update") or {}
+            playwright_closed = bool(mo_update.get("playwright_closed"))
+            playwright_error = mo_update.get("playwright_error")
 
-            # 3) Si la API no aceptó Done, intentar cerrar con el servicio externo (ERP Close MO)
+            # 3) Cierre: API Done, o Playwright (navegador), o servicio externo (ERP Close MO)
             server_url = secrets.get("mrpeasy-could-run-po-automation-service-url") or secrets.get("mrpeasy_cloud_run_po_automation_service_url") or ""
-            close_success, close_message = status_set_done_via_api, ("MO cerrado (estado Done)." if status_set_done_via_api else None)
+            close_success = status_set_done_via_api or playwright_closed
+            close_message = "MO cerrado (estado Done)." if status_set_done_via_api else ("MO cerrado (Done) por navegador." if playwright_closed else None)
             if status_set_done_via_api and inserted_id is not None:
                 _mark_order_processed(inserted_id)
-            elif server_url and not _is_service_url_invalid(server_url):
-                with st.spinner("Cerrando MO en MRPEasy (estado Done)..."):
+            elif not close_success and server_url and not _is_service_url_invalid(server_url):
+                with st.spinner("Cerrando MO en MRPeasy (estado Done)..."):
                     close_success, close_message = _close_mo_via_service(server_url, lot, qty)
                 if close_success and inserted_id is not None:
                     _mark_order_processed(inserted_id)
+            elif playwright_closed and inserted_id is not None:
+                _mark_order_processed(inserted_id)
 
             # Guardar mensajes de éxito, limpiar formulario y rerun para dejar listo el siguiente escaneo
             st.session_state["mo_success_messages"] = {
@@ -523,6 +529,7 @@ if submitted:
                 "uom_val": uom_val,
                 "close_mo_success": close_success,
                 "close_mo_message": close_message,
+                "playwright_error": playwright_error,
             }
             st.session_state["mo_clear_form_after_success"] = True
             st.rerun()
@@ -534,15 +541,14 @@ if "mo_success_messages" in st.session_state:
     st.balloons()
     if sm.get("close_mo_success"):
         st.success(f"✅ **Estado en MRPEasy:** {sm.get('close_mo_message', 'MO cerrado (Done).')}")
-    elif sm.get("close_mo_message") is not None:
-        st.warning(
-            f"⚠️ **Las cantidades se guardaron, pero el estado no se cambió a Done.**\n\n"
-            f"{sm['close_mo_message']}\n\n"
-            "**Para que el MO pase de «Not booked» a Done:** (1) Configura en **.streamlit/secrets.toml** la clave "
-            "**mrpeasy-could-run-po-automation-service-url** con la URL **del servicio** que usa ERP Close MO "
-            "(ej. `https://tu-servicio.run.app`), **no** la página web de MRPEasy. (2) O marca el MO como Done manualmente en MRPEasy. "
-            "(3) O procesa este registro desde **ERP Close MO** cuando el servicio esté bien configurado."
-        )
+    elif sm.get("close_mo_message") is not None or sm.get("playwright_error"):
+        pw_err = sm.get("playwright_error") or ""
+        msg = "⚠️ **Las cantidades se guardaron, pero el estado no se cambió a Done.**\n\n"
+        if pw_err:
+            msg += f"**Playwright (cierre por navegador):** {pw_err}\n\n"
+        msg += (sm.get("close_mo_message") or "") + "\n\n"
+        msg += "**Opciones:** (1) Pon **mrpeasy_playwright_headless = false** en secrets.toml y vuelve a intentar. (2) Marca el MO como Done manualmente en MRPeasy."
+        st.warning(msg)
     if sm.get("workflow_success"):
         st.success(f"✅ {sm['workflow_message']}")
         result_data = sm.get("result_data")
