@@ -243,10 +243,13 @@ class APIManager:
                     timeout=30  # Add timeout
                 )
                 
-                # Handle rate limiting with retry
+                # Handle rate limiting with retry (MRPeasy limita solicitudes por minuto)
                 if response.status_code == 429:
                     retry_after = int(response.headers.get('Retry-After', 60))
-                    print(f"Rate limit hit. Waiting {retry_after} seconds before retry...")
+                    print(
+                        f"[MRPeasy API] Límite de solicitudes alcanzado (429). "
+                        f"Esperando {retry_after}s y reintentando automáticamente..."
+                    )
                     time.sleep(retry_after)
                     continue  # Retry the same request
 

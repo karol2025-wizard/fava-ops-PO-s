@@ -702,7 +702,7 @@ with st.expander("📂 Ver base de datos (dónde se guarda la información)"):
                     "processed_at": "Sí" if r.get("processed_at") else "No",
                     "failed_code": "Sí" if r.get("failed_code") else "",
                 })
-            st.dataframe(display_data, use_container_width=True, hide_index=True)
+            st.dataframe(display_data, width="stretch", hide_index=True)
             st.caption(f"Últimos {len(display_data)} registros. Los que tienen processed_at = No aparecen en ERP Close MO como pendientes.")
         else:
             st.info("Aún no hay registros en la base de datos.")
