@@ -327,6 +327,231 @@ def _fetch_print_history_from_mysql(lot_code: str) -> List[Dict[str, Any]]:
     return entries
 
 
+def _normalize_lot_key(entry_lot: str) -> str:
+    """Lote normalizado para agrupar (siempre con L si es numérico)."""
+    s = (entry_lot or "").strip()
+    if not s:
+        return ""
+    if s.upper().startswith("L") and len(s) > 1:
+        return s.upper()
+    return "L" + s.upper()
+
+
+def _get_label_printer_summary_from_json(since_date: str) -> List[Dict[str, Any]]:
+    """
+    Resumen por lote desde data/production/label_printer_history.json (fallback si MySQL vacío).
+    Filtra por fecha si las entradas tienen timestamp/printed_at/inserted_at.
+    """
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        default_json = os.path.join(project_root, "data", "production", "label_printer_history.json")
+        if not os.path.isfile(default_json):
+            return []
+        with open(default_json, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            return []
+        since_d = datetime.strptime(since_date, "%Y-%m-%d").date()
+        by_lot: Dict[str, List[Dict[str, Any]]] = {}
+        for e in data:
+            if e.get("voided_at"):
+                continue
+            lot_raw = e.get("lot") or e.get("lot_code") or ""
+            lot = _normalize_lot_key(lot_raw)
+            if not lot:
+                continue
+            ts = e.get("timestamp") or e.get("printed_at") or e.get("inserted_at") or e.get("date")
+            if ts:
+                try:
+                    if isinstance(ts, str) and len(ts) >= 10:
+                        t_date = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+                    else:
+                        continue
+                except Exception:
+                    t_date = None
+                if t_date is not None and t_date < since_d:
+                    continue
+            by_lot.setdefault(lot, []).append(e)
+        result = []
+        for lot, entries in by_lot.items():
+            qty, uom = _aggregate_print_history(entries)
+            if qty is None or qty <= 0:
+                continue
+            first_at = last_at = None
+            for e in entries:
+                t = e.get("timestamp") or e.get("printed_at") or e.get("inserted_at")
+                if t:
+                    try:
+                        dt = datetime.fromisoformat(str(t).replace("Z", "+00:00")) if isinstance(t, str) else t
+                        if first_at is None or dt < first_at:
+                            first_at = dt
+                        if last_at is None or dt > last_at:
+                            last_at = dt
+                    except Exception:
+                        pass
+            has_container = any(e.get("container_type") for e in entries)
+            result.append({
+                "lot_code": lot,
+                "total_entries": int(qty) if has_container else 0,
+                "total_weight": float(qty) if not has_container else 0.0,
+                "quantity": float(qty),
+                "uom": uom,
+                "first_at": first_at,
+                "last_at": last_at,
+            })
+        result.sort(key=lambda x: (x["last_at"] or datetime.min), reverse=True)
+        return result
+    except Exception as e:
+        logger.debug("Could not read label printer summary from JSON: %s", e)
+        return []
+
+
+def _get_label_printer_summary_from_sqlite(since_date: str) -> List[Dict[str, Any]]:
+    """
+    Resumen por lote desde el .db de WeightLabelPrinter (fallback).
+    Obtiene todos los lotes únicos y agrega por lote.
+    """
+    db_path = _get_label_printer_db_path()
+    if not db_path or not os.path.isfile(db_path):
+        return []
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        tables = [r[0] for r in cur.fetchall()]
+        lot_col = None
+        for table in tables:
+            try:
+                cur.execute(f"PRAGMA table_info({table})")
+                cols = [r[1] for r in cur.fetchall()]
+                cols_lower = [c.lower() for c in cols]
+                for c in ["lot_code", "lot", "lot_number"]:
+                    if c in cols_lower:
+                        lot_col = cols[cols_lower.index(c)]
+                        break
+                if not lot_col:
+                    continue
+                time_col = None
+                for tc in ["inserted_at", "created_at", "printed_at", "timestamp"]:
+                    if tc in cols_lower:
+                        time_col = cols[cols_lower.index(tc)]
+                        break
+                cur.execute(f'SELECT DISTINCT TRIM(CAST("{lot_col}" AS TEXT)) FROM "{table}"')
+                lots = [r[0] for r in cur.fetchall() if r and r[0]]
+            except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+                continue
+            break
+        conn.close()
+        if not lot_col or not lots:
+            return []
+        result = []
+        for lot_raw in lots:
+            lot = _normalize_lot_key(lot_raw)
+            if not lot:
+                continue
+            entries = _fetch_print_history_from_sqlite(db_path, lot_raw)
+            if not entries:
+                continue
+            qty, uom = _aggregate_print_history(entries)
+            if qty is None or qty <= 0:
+                continue
+            has_container = bool(entries and entries[0].get("container_type"))
+            result.append({
+                "lot_code": lot,
+                "total_entries": int(qty) if has_container else 0,
+                "total_weight": float(qty) if not has_container else 0.0,
+                "quantity": float(qty),
+                "uom": uom,
+                "first_at": None,
+                "last_at": None,
+            })
+        result.sort(key=lambda x: x["lot_code"])
+        return result
+    except Exception as e:
+        logger.debug("Could not read label printer summary from SQLite: %s", e)
+        return []
+
+
+def get_label_printer_summary_since(since_date: str) -> List[Dict[str, Any]]:
+    """
+    Devuelve un resumen por lote desde una fecha.
+    Fuentes (en orden): MySQL erp_lot_label_print → JSON → SQLite .db.
+
+    Args:
+        since_date: Fecha mínima en formato 'YYYY-MM-DD' (ej. '2025-02-01').
+
+    Returns:
+        Lista de dicts con: lot_code, total_entries, total_weight, quantity, uom, first_at, last_at.
+    """
+    # 1) MySQL (tabla erp_lot_label_print)
+    cfg = _get_label_printer_mysql_config()
+    if cfg:
+        try:
+            import pymysql
+            conn = pymysql.connect(
+                host=cfg["host"],
+                port=cfg["port"],
+                user=cfg["user"],
+                password=cfg["password"],
+                database=cfg["database"],
+                charset="utf8mb4",
+                cursorclass=pymysql.cursors.DictCursor,
+            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        lot_code,
+                        SUM(CASE WHEN (container_type IS NOT NULL AND TRIM(COALESCE(container_type,'')) != '') THEN 1 ELSE 0 END) AS entries_count,
+                        SUM(CASE WHEN (container_type IS NULL OR TRIM(COALESCE(container_type,'')) = '') AND weight IS NOT NULL THEN COALESCE(weight, 0) ELSE 0 END) AS total_weight,
+                        MIN(inserted_at) AS first_at,
+                        MAX(inserted_at) AS last_at,
+                        MAX(COALESCE(container_type, uom)) AS uom_pref,
+                        MAX(uom) AS uom_fall
+                    FROM erp_lot_label_print
+                    WHERE (voided_at IS NULL OR voided_at = 0 OR voided_at = '')
+                      AND inserted_at >= %s
+                    GROUP BY lot_code
+                    HAVING entries_count > 0 OR total_weight > 0
+                    ORDER BY last_at DESC
+                    """,
+                    (since_date,),
+                )
+                rows = cur.fetchall()
+            conn.close()
+            if rows:
+                result = []
+                for r in rows:
+                    entries_count = int(r.get("entries_count") or 0)
+                    total_weight = float(r.get("total_weight") or 0)
+                    quantity = entries_count if entries_count > 0 else total_weight
+                    uom = (r.get("uom_pref") or r.get("uom_fall") or "").strip() or None
+                    result.append({
+                        "lot_code": (r.get("lot_code") or "").strip(),
+                        "total_entries": entries_count,
+                        "total_weight": total_weight,
+                        "quantity": quantity,
+                        "uom": uom,
+                        "first_at": r.get("first_at"),
+                        "last_at": r.get("last_at"),
+                    })
+                return result
+        except Exception as e:
+            logger.debug("MySQL label printer summary failed: %s", e)
+
+    # 2) JSON por defecto
+    json_result = _get_label_printer_summary_from_json(since_date)
+    if json_result:
+        return json_result
+
+    # 3) SQLite .db
+    sqlite_result = _get_label_printer_summary_from_sqlite(since_date)
+    if sqlite_result:
+        return sqlite_result
+
+    return []
+
+
 def get_label_printer_quantity(lot_code: str) -> Tuple[Optional[float], Optional[str]]:
     """
     Obtiene la cantidad (y unidad) impresa para un lote desde el sistema de la impresora de etiquetas.

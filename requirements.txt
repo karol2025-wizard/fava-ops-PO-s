@@ -1,0 +1,4 @@
+# Core app dependencies (Streamlit, etc. may be in environment)
+# PDF handling for recipe ZIP and barcode PDFs
+PyPDF2>=3.0.0
+reportlab>=4.0.0

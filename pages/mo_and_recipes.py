@@ -24,6 +24,11 @@ from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from reportlab.graphics.barcode import code128
 import requests
 
+try:
+    from PyPDF2 import PdfReader
+except ImportError:
+    PdfReader = None  # install with: pip install PyPDF2
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -449,7 +454,7 @@ CATEGORY_ICONS = {
 PROFESSIONAL_CATEGORIES = {
     'Bases & Preparations': {
         'keywords': ['base', 'stock', 'syrup', 'cornstarch', 'eggplant grilled', 'chickpea cooked for garnish', 'beet steamed'],
-        'item_codes': ['A1635', 'A1634', 'A1600', 'A1616', 'A1176', 'A1315', 'A1233', 'A1615', 'A1649', 'A1011', 'A00570']
+        'item_codes': ['A1635', 'A1634', 'A1600', 'A1616', 'A1176', 'A1315', 'A1233', 'A1615', 'A1649', 'A1011', 'A00570', 'A00627', 'A00628']
     },
     'Dips & Sauces': {
         'keywords': ['hummus', 'mutabbal', 'mouhammara', 'tarator', 'mayo', 'yogourt', 'yogurt', 'sauce', 'marinade', 'terbyelli', 'confit tomatoes', 'labneh', 'tajin', 'dressing', 'menemen'],
@@ -886,11 +891,12 @@ def extract_item_info_from_pdf_text(text_content):
 
 def find_recipe_pdf_from_zip(item_code, item_title, zip_path=None):
     """Find recipe PDF from ZIP file by item code or title"""
+    if PdfReader is None:
+        return {'type': 'error', 'error': 'PyPDF2_not_installed'}
     import zipfile
     import re
-    from PyPDF2 import PdfReader
     from io import BytesIO
-    
+
     # Default path to recipes ZIP
     if zip_path is None:
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1386,6 +1392,307 @@ def generate_recipe_pdf_from_gdocs(recipe_data, item_code, item_title):
     return pdf_filename
 
 
+def _get_bom_parts_csv_path():
+    """Return path to BOM parts CSV if present: data/bom_parts.csv or latest data/parts_*.csv."""
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_dir = os.path.join(project_root, 'data')
+    fixed = os.path.join(data_dir, 'bom_parts.csv')
+    if os.path.isfile(fixed):
+        return fixed
+    try:
+        import glob
+        parts_files = glob.glob(os.path.join(data_dir, 'parts_*.csv'))
+        if parts_files:
+            return max(parts_files, key=os.path.getmtime)
+    except Exception:
+        pass
+    return None
+
+
+def _load_bom_for_product(product_code, csv_path=None):
+    """
+    Load BOM rows for a product from MRPEasy parts CSV.
+    Returns dict with bom_number, bom_name, rows; or None if not found.
+    rows: list of (part_no, part_description, quantity_with_unit).
+    product_code is matched against 'Product number' (e.g. A00558 or A00534-del...).
+    """
+    import csv
+    path = csv_path or _get_bom_parts_csv_path()
+    if not path or not os.path.isfile(path):
+        return None
+    bom_number = None
+    bom_name = None
+    rows = []
+    try:
+        with open(path, 'r', encoding='utf-8-sig', newline='') as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                return None
+            code_upper = (product_code or '').strip().upper()
+            code_base = code_upper.split('-')[0] if code_upper else ''
+            for row in reader:
+                pn = (row.get('Product number') or '').strip()
+                if not pn:
+                    continue
+                pn_base = pn.upper().split('-')[0]
+                if pn_base != code_base and pn.upper() != code_upper:
+                    continue
+                if bom_number is None:
+                    bom_number = (row.get('BOM number') or '').strip()
+                    bom_name = (row.get('BOM name') or '').strip()
+                part_no = (row.get('Part No.') or '').strip()
+                part_desc = (row.get('Part description') or '').strip()
+                unit = (row.get('Unit of measurement') or '').strip()
+                qty_str = row.get('Quantity', '')
+                try:
+                    qty_val = float(qty_str)
+                    qty_display = f"{qty_val:.2f}".rstrip('0').rstrip('.') if qty_val != int(qty_val) else str(int(qty_val))
+                except (ValueError, TypeError):
+                    qty_display = str(qty_str).strip()
+                qty_with_unit = f"{qty_display} {unit}" if unit else qty_display
+                rows.append((part_no, part_desc, qty_with_unit))
+    except Exception as e:
+        logger.warning("Failed to load BOM CSV %s: %s", path, e)
+    if not rows:
+        return None
+    return {'bom_number': bom_number or '', 'bom_name': bom_name or '', 'rows': rows}
+
+
+def _parse_recipe_text_to_sections(full_text):
+    """
+    Parse recipe PDF text into BOM/ingredients and procedure sections.
+    Returns (ingredients_list, procedure_lines).
+    ingredients_list: list of (ingredient_name, quantity) for table display.
+    procedure_lines: list of text lines for instructions.
+    """
+    if not full_text or not full_text.strip():
+        return [], []
+    lines = [ln.strip() for ln in full_text.split('\n') if ln.strip()]
+    # Common section headers (MRPEasy / typical recipe PDFs)
+    bom_keywords = ['bom', 'bill of materials', 'ingredients', 'ingredientes', 'materials', 'materias']
+    procedure_keywords = ['procedure', 'instructions', 'method', 'procedimiento', 'instrucciones', 'method', 'steps', 'pasos']
+    ingredients_list = []  # list of (name, qty)
+    procedure_lines = []
+    current_section = None  # 'bom' | 'procedure' | None
+    seen_bom = False
+    seen_procedure = False
+
+    for i, line in enumerate(lines):
+        line_lower = line.lower()
+        # Detect section start
+        if any(k in line_lower and len(line) < 80 for k in bom_keywords):
+            current_section = 'bom'
+            seen_bom = True
+            continue
+        if any(k in line_lower and len(line) < 80 for k in procedure_keywords):
+            current_section = 'procedure'
+            seen_procedure = True
+            continue
+        # If we haven't seen headers, treat first lines as possible title/code, then try to detect BOM by pattern
+        if current_section == 'bom':
+            # BOM lines often: "Item name – 1.5 kg" or "Item name: 100 g"
+            parts = re.split(r'\s*[–\-:\t]\s*', line, maxsplit=1)
+            if len(parts) == 2 and len(parts[0]) > 0 and len(parts[1]) > 0:
+                name, qty = parts[0].strip(), parts[1].strip()
+                if name and qty and not name.lower().startswith('step') and not name.isdigit():
+                    ingredients_list.append((name, qty))
+            elif line and not line.startswith('#'):
+                # Single field: treat as ingredient name with no quantity
+                ingredients_list.append((line, ''))
+        elif current_section == 'procedure':
+            procedure_lines.append(line)
+        else:
+            # Before any section: try to treat lines that look like "X – Y" as BOM
+            parts = re.split(r'\s*[–\-:\t]\s*', line, maxsplit=1)
+            if len(parts) == 2 and len(parts[0]) > 0 and len(parts[1]) > 0:
+                name, qty = parts[0].strip(), parts[1].strip()
+                if name and not name.lower().startswith('step') and not name.isdigit():
+                    ingredients_list.append((name, qty))
+            elif seen_bom and not seen_procedure and line:
+                procedure_lines.append(line)
+
+    return ingredients_list, procedure_lines
+
+
+def generate_fava_recipe_pdf_from_zip_recipe(recipe_zip_dict, locale: str = 'en'):
+    """
+    Generate a recipe PDF in Fava format (different from MRPEasy BOM layout).
+    recipe_zip_dict: dict from find_recipe_pdf_from_zip with keys
+      text_content, item_name, item_code.
+    """
+    temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+    pdf_filename = temp_pdf.name
+    temp_pdf.close()
+
+    doc = SimpleDocTemplate(pdf_filename, pagesize=letter,
+                            rightMargin=0.5*inch, leftMargin=0.5*inch,
+                            topMargin=0.75*inch, bottomMargin=0.5*inch)
+    elements = []
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        'FavaRecipeTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        textColor=colors.HexColor('#1E3A8A'),
+        spaceAfter=6,
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold'
+    )
+    subtitle_style = ParagraphStyle(
+        'FavaRecipeSubtitle',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor=colors.HexColor('#4B5563'),
+        spaceAfter=16,
+        alignment=TA_CENTER,
+        fontName='Helvetica'
+    )
+    section_header_style = ParagraphStyle(
+        'FavaSectionHeader',
+        parent=styles['Heading2'],
+        fontSize=12,
+        fontName='Helvetica-Bold',
+        spaceAfter=10,
+        alignment=TA_LEFT
+    )
+    header_style = ParagraphStyle(
+        'FavaTableHeader',
+        parent=styles['Normal'],
+        fontSize=10,
+        fontName='Helvetica-Bold',
+        textColor=colors.white,
+        alignment=TA_CENTER
+    )
+    cell_style = ParagraphStyle(
+        'FavaCell',
+        parent=styles['Normal'],
+        fontSize=9,
+        fontName='Helvetica',
+        leading=12
+    )
+
+    item_name = recipe_zip_dict.get('item_name') or 'Recipe'
+    item_code = recipe_zip_dict.get('item_code') or ''
+    text_content = recipe_zip_dict.get('text_content') or ''
+
+    # BOM from CSV: layout like MRPEasy BOM (Product, Number, Name, table # | Part | Quantity; no approximate cost)
+    bom_data = _load_bom_for_product(item_code)
+    if bom_data and bom_data.get('rows'):
+        # Header: title "BOMA1567 Cheese Borek - tray BOM"
+        bom_title = f"BOM{item_code} {item_name} BOM"
+        elements.append(Paragraph(bom_title, title_style))
+        elements.append(Spacer(1, 0.08*inch))
+        # Product, Number, Name (like the reference document)
+        info_style = ParagraphStyle(
+            'BOMInfo', parent=subtitle_style, fontSize=10, alignment=TA_LEFT, spaceAfter=2
+        )
+        elements.append(Paragraph(f"<b>Product:</b> {item_code} {item_name}", info_style))
+        elements.append(Paragraph(f"<b>Number:</b> {bom_data.get('bom_number') or ('BOM' + item_code)}", info_style))
+        elements.append(Paragraph(f"<b>Name:</b> {bom_data.get('bom_name') or (item_name + ' BOM')}", info_style))
+        elements.append(Spacer(1, 0.15*inch))
+        # Table: # | Part | Quantity (no Approximate cost)
+        bom_table_data = []
+        bom_table_data.append([
+            Paragraph('#', header_style),
+            Paragraph('Part', header_style),
+            Paragraph(_pdf_t('quantity_col', locale), header_style)
+        ])
+        for i, (part_no, part_desc, qty_with_unit) in enumerate(bom_data['rows'], 1):
+            part_cell = f"{part_no} {part_desc}".strip() if part_no else part_desc
+            bom_table_data.append([
+                    Paragraph(str(i), cell_style),
+                    Paragraph(part_cell.replace('&', '&amp;'), cell_style),
+                    Paragraph((qty_with_unit or '').replace('&', '&amp;'), cell_style)
+            ])
+        bom_col_widths = [0.5*inch, 4.5*inch, 2*inch]
+        bom_table = Table(bom_table_data, colWidths=bom_col_widths, repeatRows=1)
+        bom_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2563EB')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+            ('ALIGN', (2, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#94A3B8')),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(bom_table)
+        _, procedure_lines = _parse_recipe_text_to_sections(text_content)
+    else:
+        # Fallback: no CSV or no rows — simple title + 2-column table
+        elements.append(Paragraph(item_name, title_style))
+        if item_code:
+            elements.append(Paragraph(f"<b>Código:</b> {item_code}", subtitle_style))
+        elements.append(Spacer(1, 0.12*inch))
+        ingredients_list, procedure_lines = _parse_recipe_text_to_sections(text_content)
+        section_title = _pdf_t('recipe_summary', locale)
+        elements.append(Paragraph(section_title, section_header_style))
+        bom_table_data = []
+        bom_table_data.append([
+            Paragraph(_pdf_t('ingredients_col', locale), header_style),
+            Paragraph(_pdf_t('quantity_col', locale), header_style)
+        ])
+        for name, qty in ingredients_list:
+            bom_table_data.append([
+                Paragraph(name.replace('&', '&amp;'), cell_style),
+                Paragraph((qty or '').replace('&', '&amp;'), cell_style)
+            ])
+        if not ingredients_list:
+            bom_table_data.append([
+                Paragraph('—', cell_style),
+                Paragraph('—', cell_style)
+            ])
+        bom_col_widths = [5*inch, 2*inch]
+        bom_table = Table(bom_table_data, colWidths=bom_col_widths, repeatRows=1)
+        bom_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2563EB')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+            ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#94A3B8')),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(bom_table)
+    elements.append(Spacer(1, 0.25*inch))
+
+    # Procedure / Instructions: solo cuando NO usamos BOM desde CSV (usuario quiere solo el BOM, sin paso a paso)
+    if not (bom_data and bom_data.get('rows')):
+        proc_title = _pdf_t('instructions', locale) if locale else 'Procedure / Instructions'
+        elements.append(Paragraph(proc_title, section_header_style))
+        for line in procedure_lines:
+            if line:
+                elements.append(Paragraph(line.replace('&', '&amp;'), cell_style))
+        if not procedure_lines:
+            for line in (text_content or '').split('\n'):
+                line = line.strip()
+                if line:
+                    elements.append(Paragraph(line.replace('&', '&amp;'), cell_style))
+
+    doc.build(elements)
+    return pdf_filename
+
+
 def _pdf_t(key: str, locale: str = 'en') -> str:
     """Get translated string for PDF (no session state)."""
     d = TRANSLATIONS.get(locale, TRANSLATIONS['en'])
@@ -1828,7 +2135,9 @@ def main():
         # BREAD TEAM
         'A1558', 'A1561',
         # NEW / OTHER (added from production list)
-        'A00571', 'A00589', 'A00570', 'A00577', 'A00558', 'A00585'
+        'A00571', 'A00589', 'A00570', 'A00577', 'A00558', 'A00585',
+        # Bases & Preparations
+        'A00627', 'A00628'
     }
     
     # Filter to only show allowed item codes
@@ -2223,6 +2532,7 @@ def main():
             if not st.session_state.get('current_recipe') or st.session_state.get('recipe_item_code') != selected_item.get('code'):
                 recipe = None
                 recipe_source = None
+                pypdf2_missing = False
                 
                 # First, try to find recipe in ZIP file
                 with st.spinner(t("searching_pdf")):
@@ -2230,12 +2540,17 @@ def main():
                         selected_item.get('code'),
                         selected_item.get('title')
                     )
-                    if recipe_pdf:
+                    if recipe_pdf and recipe_pdf.get('type') == 'error' and recipe_pdf.get('error') == 'PyPDF2_not_installed':
+                        pypdf2_missing = True
+                        st.error("**Falta instalar PyPDF2** — Las recetas desde el ZIP necesitan esta librería.")
+                        st.code("pip install PyPDF2", language="text")
+                        st.markdown("Abre una terminal en la carpeta del proyecto, activa el venv si usas uno (`venv\\Scripts\\activate`) y ejecuta el comando de arriba.")
+                    elif recipe_pdf:
                         recipe = recipe_pdf
                         recipe_source = 'zip'
                 
-                # If not found in ZIP, try Google Docs
-                if not recipe and use_google_docs_recipes and recipes_doc_url:
+                # If not found in ZIP, try Google Docs (unless PyPDF2 was the only issue)
+                if not recipe and not pypdf2_missing and use_google_docs_recipes and recipes_doc_url:
                     with st.spinner(t("loading_gdocs")):
                         recipe_gdocs = find_recipe_by_item_code(
                             selected_item.get('code'),
@@ -2246,13 +2561,25 @@ def main():
                             recipe = recipe_gdocs
                             recipe_source = 'gdocs'
                 
+                # Si no hay receta en ZIP ni Google Docs, usar BOM del CSV si existe (ej. A00577 Potatoes...)
+                if not recipe and not pypdf2_missing:
+                    bom_data = _load_bom_for_product(selected_item.get('code'))
+                    if bom_data and bom_data.get('rows'):
+                        recipe = {
+                            'type': 'pdf',
+                            'item_name': selected_item.get('title'),
+                            'item_code': selected_item.get('code'),
+                            'text_content': '',
+                        }
+                        recipe_source = 'csv'
+                
                 # Store recipe in session state
                 if recipe:
                     st.session_state.current_recipe = recipe
                     st.session_state.recipe_item_code = selected_item.get('code')
                     st.session_state.recipe_source = recipe_source
                     st.rerun()
-                else:
+                elif not pypdf2_missing:
                     # No recipe found in either source
                     if not use_google_docs_recipes or not recipes_doc_url:
                         st.warning("⚠️ Recipe sources not configured.")
@@ -2287,88 +2614,90 @@ def main():
                         if os.path.exists(zip_path):
                             st.write(f"")
                             st.write(f"**ZIP file found:** ✅ `{zip_path}`")
-                            try:
-                                import zipfile
-                                from PyPDF2 import PdfReader
-                                from io import BytesIO
-                                
-                                with zipfile.ZipFile(zip_path, 'r') as z:
-                                    pdf_files = [f for f in z.namelist() if f.lower().endswith('.pdf')]
-                                    st.write(f"**PDFs in ZIP:** {len(pdf_files)}")
+                            if PdfReader is None:
+                                st.warning("PyPDF2 no está instalado. Instala con: `pip install PyPDF2`")
+                            else:
+                                try:
+                                    import zipfile
+                                    from io import BytesIO
                                     
-                                    # Show search variations
-                                    item_code = selected_item.get('code', '')
-                                    item_title = selected_item.get('title', '')
-                                    item_title_lower = item_title.lower().strip()
-                                    
-                                    title_variations = [
-                                        item_title_lower,
-                                        item_title_lower.replace(' - ', ' '),
-                                        item_title_lower.replace('-', ' '),
-                                        item_title_lower.split(' - ')[0],
-                                        item_title_lower.split('(')[0].strip(),
-                                        item_title_lower.replace('tray', '').strip(),
-                                        item_title_lower.replace('bag', '').strip(),
-                                    ]
-                                    title_variations = list(set([v for v in title_variations if v and len(v) > 2]))
-                                    
-                                    st.write("")
-                                    st.write("**Search variations being used:**")
-                                    st.write(f"- Code: `{item_code}` (case-insensitive)")
-                                    st.write(f"- Title variations: {', '.join([f'`{v}`' for v in title_variations[:5]])}")
-                                    
-                                    # Try to find matches
-                                    st.write("")
-                                    st.write("**Scanning PDFs for matches...**")
-                                    matches_found = []
-                                    for pdf_name in pdf_files[:10]:  # Check first 10 PDFs
-                                        try:
-                                            pdf_data = z.read(pdf_name)
-                                            pdf_reader = PdfReader(BytesIO(pdf_data))
-                                            full_text = ""
-                                            for page in pdf_reader.pages:
-                                                full_text += page.extract_text() + "\n"
-                                            
-                                            full_text_lower = full_text.lower()
-                                            
-                                            # Check for code match
-                                            code_match = item_code.lower() in full_text_lower or item_code.upper() in full_text
-                                            
-                                            # Check for title matches
-                                            title_matches = []
-                                            for var in title_variations:
-                                                if var in full_text_lower:
-                                                    title_matches.append(var)
-                                            
-                                            if code_match or title_matches:
-                                                pdf_item_name, pdf_item_code = extract_item_info_from_pdf_text(full_text)
-                                                matches_found.append({
-                                                    'name': pdf_name,
-                                                    'code_match': code_match,
-                                                    'title_matches': title_matches,
-                                                    'extracted_code': pdf_item_code,
-                                                    'extracted_name': pdf_item_name
-                                                })
-                                        except Exception as e:
-                                            continue
-                                    
-                                    if matches_found:
-                                        st.write(f"**Found {len(matches_found)} potential match(es):**")
-                                        for match in matches_found:
-                                            st.write(f"- `{match['name']}`")
-                                            if match['code_match']:
-                                                st.write(f"  ✅ Code match: {match['extracted_code']}")
-                                            if match['title_matches']:
-                                                st.write(f"  ✅ Title match: {', '.join(match['title_matches'][:2])}")
-                                            if match['extracted_code']:
-                                                st.write(f"  📋 Extracted code: {match['extracted_code']}")
-                                            if match['extracted_name']:
-                                                st.write(f"  📋 Extracted name: {match['extracted_name']}")
-                                    else:
-                                        st.write("❌ No matches found in scanned PDFs")
+                                    with zipfile.ZipFile(zip_path, 'r') as z:
+                                        pdf_files = [f for f in z.namelist() if f.lower().endswith('.pdf')]
+                                        st.write(f"**PDFs in ZIP:** {len(pdf_files)}")
                                         
-                            except Exception as e:
-                                st.write(f"⚠️ Error reading ZIP: {str(e)}")
+                                        # Show search variations
+                                        item_code = selected_item.get('code', '')
+                                        item_title = selected_item.get('title', '')
+                                        item_title_lower = item_title.lower().strip()
+                                        
+                                        title_variations = [
+                                            item_title_lower,
+                                            item_title_lower.replace(' - ', ' '),
+                                            item_title_lower.replace('-', ' '),
+                                            item_title_lower.split(' - ')[0],
+                                            item_title_lower.split('(')[0].strip(),
+                                            item_title_lower.replace('tray', '').strip(),
+                                            item_title_lower.replace('bag', '').strip(),
+                                        ]
+                                        title_variations = list(set([v for v in title_variations if v and len(v) > 2]))
+                                        
+                                        st.write("")
+                                        st.write("**Search variations being used:**")
+                                        st.write(f"- Code: `{item_code}` (case-insensitive)")
+                                        st.write(f"- Title variations: {', '.join([f'`{v}`' for v in title_variations[:5]])}")
+                                        
+                                        # Try to find matches
+                                        st.write("")
+                                        st.write("**Scanning PDFs for matches...**")
+                                        matches_found = []
+                                        for pdf_name in pdf_files[:10]:  # Check first 10 PDFs
+                                            try:
+                                                pdf_data = z.read(pdf_name)
+                                                pdf_reader = PdfReader(BytesIO(pdf_data))
+                                                full_text = ""
+                                                for page in pdf_reader.pages:
+                                                    full_text += page.extract_text() + "\n"
+                                                
+                                                full_text_lower = full_text.lower()
+                                                
+                                                # Check for code match
+                                                code_match = item_code.lower() in full_text_lower or item_code.upper() in full_text
+                                                
+                                                # Check for title matches
+                                                title_matches = []
+                                                for var in title_variations:
+                                                    if var in full_text_lower:
+                                                        title_matches.append(var)
+                                                
+                                                if code_match or title_matches:
+                                                    pdf_item_name, pdf_item_code = extract_item_info_from_pdf_text(full_text)
+                                                    matches_found.append({
+                                                        'name': pdf_name,
+                                                        'code_match': code_match,
+                                                        'title_matches': title_matches,
+                                                        'extracted_code': pdf_item_code,
+                                                        'extracted_name': pdf_item_name
+                                                    })
+                                            except Exception as e:
+                                                continue
+                                        
+                                        if matches_found:
+                                            st.write(f"**Found {len(matches_found)} potential match(es):**")
+                                            for match in matches_found:
+                                                st.write(f"- `{match['name']}`")
+                                                if match['code_match']:
+                                                    st.write(f"  ✅ Code match: {match['extracted_code']}")
+                                                if match['title_matches']:
+                                                    st.write(f"  ✅ Title match: {', '.join(match['title_matches'][:2])}")
+                                                if match['extracted_code']:
+                                                    st.write(f"  📋 Extracted code: {match['extracted_code']}")
+                                                if match['extracted_name']:
+                                                    st.write(f"  📋 Extracted name: {match['extracted_name']}")
+                                        else:
+                                            st.write("❌ No matches found in scanned PDFs")
+                                
+                                except Exception as e:
+                                    st.write(f"⚠️ Error reading ZIP: {str(e)}")
                         else:
                             st.write(f"")
                             st.write(f"**ZIP file not found:** ❌ `{zip_path}`")
@@ -2389,49 +2718,65 @@ def main():
                     st.info("📦 " + t("recipe_from_zip"))
                 elif recipe_source == 'gdocs':
                     st.info("📄 " + t("recipe_from_gdocs"))
+                elif recipe_source == 'csv':
+                    st.info("📋 BOM desde archivo (data/bom_parts.csv)")
                 
                 # Handle PDF recipe
                 if recipe.get('type') == 'pdf':
-                    # Use item name from PDF if available, otherwise use selected item title
-                    pdf_item_name = recipe.get('item_name')
-                    pdf_item_code = recipe.get('item_code')
-                    
-                    # Determine display name and code
-                    display_name = pdf_item_name if pdf_item_name else selected_item.get('title', 'Recipe')
-                    display_code = pdf_item_code if pdf_item_code else selected_item.get('code')
-                    
-                    # Show warning if names don't match
-                    if pdf_item_name and pdf_item_name.lower() != selected_item.get('title', '').lower():
-                        st.warning(f"⚠️ **Note:** The recipe PDF contains item name '{pdf_item_name}', which differs from the selected item '{selected_item.get('title')}'. Displaying the name from the PDF.")
-                    
-                    # Show warning if codes don't match
-                    if pdf_item_code and pdf_item_code.upper() != selected_item.get('code', '').upper():
-                        st.error(f"❌ **Error:** The recipe PDF contains item code '{pdf_item_code}', which does not match the selected item code '{selected_item.get('code')}'. This recipe may not be correct for this item.")
-                    
+                    # Siempre mostrar título completo del ítem seleccionado (ej. Cheese Borek - tray (A1567))
+                    display_name = selected_item.get('title', 'Recipe')
+                    display_code = selected_item.get('code', '')
                     st.markdown(f"### {display_name} ({display_code})")
                     
-                    # Display PDF download button only
-                    pdf_data = recipe.get('pdf_data')
-                    if pdf_data:
-                        # Ensure pdf_data is bytes
-                        if isinstance(pdf_data, str):
-                            pdf_data = pdf_data.encode('utf-8')
-                        elif not isinstance(pdf_data, bytes):
-                            pdf_data = bytes(pdf_data)
-                        
-                        # Use PDF item name for filename if available
-                        filename_name = pdf_item_name if pdf_item_name else selected_item.get('title', 'recipe')
-                        filename_code = pdf_item_code if pdf_item_code else selected_item.get('code')
-                        
-                        # Download button
-                        st.download_button(
-                            label="📥 " + t("download_recipe_pdf"),
-                            data=pdf_data,
-                            file_name=f"recipe_{filename_code}_{filename_name.replace(' ', '_')}.pdf",
-                            mime="application/pdf",
-                            use_container_width=True,
-                            type="primary"
-                        )
+                    # Solo un botón: Descargar PDF (formato Fava)
+                    item_code = selected_item.get('code', '')
+                    filename_name = (selected_item.get('title') or 'recipe').replace(' ', '_')
+                    filename_code = item_code or 'recipe'
+                    cache_key = f"fava_pdf_{item_code}"
+                    if cache_key not in st.session_state:
+                        with st.spinner("Generando PDF (formato Fava)..."):
+                            try:
+                                locale = st.session_state.get('locale', 'en')
+                                fava_pdf_path = generate_fava_recipe_pdf_from_zip_recipe(recipe, locale=locale)
+                                with open(fava_pdf_path, 'rb') as f:
+                                    st.session_state[cache_key] = (f.read(), f"recipe_fava_{filename_code}_{filename_name}.pdf")
+                                try:
+                                    os.unlink(fava_pdf_path)
+                                except Exception:
+                                    pass
+                            except Exception as e:
+                                st.error(f"Error generando PDF formato Fava: {str(e)}")
+                                logger.exception("generate_fava_recipe_pdf_from_zip_recipe failed")
+                    if cache_key in st.session_state:
+                        fava_bytes, fava_filename = st.session_state[cache_key]
+                        # Abrir ventana con PDF embebido y, al cargar, abrir diálogo de impresión
+                        pdf_b64 = base64.b64encode(fava_bytes).decode('ascii')
+                        print_btn_html = f'''
+                        <button id="print-pdf-btn" type="button" style="
+                            width:100%; padding:0.5rem 1rem; font-size:1rem; cursor:pointer;
+                            background:#FF4B4B; color:white; border:none; border-radius:0.5rem;
+                            font-weight:500;">
+                            🖨️ Imprimir PDF (formato Fava)
+                        </button>
+                        <script>
+                        (function() {{
+                            var pdfB64 = "{pdf_b64}";
+                            var btn = document.getElementById("print-pdf-btn");
+                            if (btn && !btn._bound) {{
+                                btn._bound = true;
+                                btn.onclick = function() {{
+                                    var w = window.open("", "_blank", "width=900,height=700");
+                                    if (w) {{
+                                        w.document.write('<html><head><title>Imprimir</title></head><body style="margin:0;height:100vh;"><embed src="data:application/pdf;base64,' + pdfB64 + '" type="application/pdf" width="100%" height="100%" /></body></html>');
+                                        w.document.close();
+                                        setTimeout(function() {{ w.focus(); w.print(); }}, 2000);
+                                    }}
+                                }};
+                            }}
+                        }})();
+                        </script>
+                        '''
+                        st.components.v1.html(print_btn_html, height=60)
                 else:
                     # Handle Google Docs recipe (existing code)
                     recipe_data = st.session_state.current_recipe
@@ -2764,7 +3109,6 @@ def main():
                     if pdf_bytes:
                         # Preview PDF using base64 embedding
                         st.markdown("### 📄 " + t("pdf_preview"))
-                        import base64
                         pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
                         pdf_display = f'<iframe src="data:application/pdf;base64,{pdf_base64}" width="100%" height="600px" type="application/pdf"></iframe>'
                         st.markdown(pdf_display, unsafe_allow_html=True)

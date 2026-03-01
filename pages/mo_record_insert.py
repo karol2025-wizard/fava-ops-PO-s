@@ -221,6 +221,18 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# Opciones de flujo
+fast_mode = st.checkbox(
+    "Solo registrar LOT + cantidad (el MO se procesa en segundo plano con **Auto MO Processor / ERP Close MO**).",
+    value=True,
+    key="mo_fast_mode",
+)
+auto_register_enabled = st.checkbox(
+    "Auto-registrar cuando la cantidad viene de la impresora (escáner → Lookup → registrar).",
+    value=False,
+    key="mo_auto_register_enabled",
+)
+
 # Mensaje tras escanear LOT (cantidad 0): "Ahora ingresa la cantidad"
 if st.session_state.get("mo_show_lot_hint"):
     st.info(
@@ -378,8 +390,41 @@ if lookup_clicked:
             if source_used:
                 st.session_state["mo_lookup_source"] = source_used
             # Código de lote tal como está en MRPeasy (ej. L33126) para guardar en BD
+            lot_for_db = (mo_data.get("lot_code") or lot_code).strip()
             if mo_data.get("lot_code"):
                 st.session_state["mo_canonical_lot_code"] = mo_data["lot_code"]
+            # Modo auto-registrar: si la cantidad viene de la impresora y está activado el checkbox,
+            # guardar automáticamente en la base y dejar listo el siguiente escaneo.
+            if (
+                auto_register_enabled
+                and isinstance(q, (int, float))
+                and q > 0
+                and source_used
+                and "Impresora" in source_used
+            ):
+                with st.spinner("Registrando cantidad automáticamente desde la impresora..."):
+                    saved = insert_production_quantity(
+                        lot_code=lot_for_db,
+                        quantity=float(q),
+                        uom=(u or "").strip() or None,
+                        user_operations="MO Record Insert (auto)",
+                    )
+                if not saved:
+                    st.error("No se pudo guardar automáticamente la cantidad. Revisa y pulsa **Registrar**.")
+                else:
+                    st.session_state["mo_success_messages"] = {
+                        "db_ok": True,
+                        "workflow_success": None,
+                        "workflow_message": "Registro guardado automáticamente desde la impresora. El MO se procesará en segundo plano (Auto MO Processor / ERP Close MO).",
+                        "result_data": None,
+                        "lot": lot_for_db,
+                        "uom_val": (u or "").strip() or None,
+                        "close_mo_success": False,
+                        "close_mo_message": None,
+                        "playwright_error": None,
+                    }
+                    st.session_state["mo_clear_form_after_success"] = True
+                    st.rerun()
             # No modificar mo_quantity/mo_uom aquí (widgets ya creados). Guardar en claves auxiliares y rerun.
             if q is not None:
                 st.session_state["mo_preserved_quantity"] = float(q)
@@ -470,11 +515,11 @@ if submitted:
     else:
         # Use canonical lot code (e.g. L33126) if set by fallback lookup; otherwise form value
         lot = (st.session_state.pop("mo_canonical_lot_code", None) or lot_code).strip()
-        # La cantidad que se guarda y se envía a MRPEasy es exactamente la de "Cantidad del sticker"
+        # La cantidad que se guarda es exactamente la de "Cantidad del sticker"
         qty = float(quantity)
         uom_val = uom.strip() if (uom and str(uom).strip()) else None
 
-        # 1) Siempre guardar en la base (misma tabla que usa ERP Close MO)
+        # 1) Siempre guardar en la base (misma tabla que usan Auto MO Processor / ERP Close MO)
         with st.spinner("Guardando en la base de datos..."):
             saved = insert_production_quantity(
                 lot_code=lot,
@@ -486,53 +531,70 @@ if submitted:
         if not saved:
             st.error("No se pudo guardar en la base de datos. Revisa los logs.")
         else:
-            # ID del registro recién insertado (para marcar processed_at tras cerrar el MO)
-            inserted_id = _get_last_inserted_id_for_lot(lot)
+            if fast_mode:
+                # Modo rápido: solo registrar LOT + cantidad; el cierre del MO lo hace Auto MO Processor / ERP Close MO.
+                st.session_state["mo_success_messages"] = {
+                    "db_ok": True,
+                    "workflow_success": None,
+                    "workflow_message": "Registro guardado. El MO se procesará automáticamente en segundo plano (Auto MO Processor / ERP Close MO).",
+                    "result_data": None,
+                    "lot": lot,
+                    "uom_val": uom_val,
+                    "close_mo_success": False,
+                    "close_mo_message": None,
+                    "playwright_error": None,
+                }
+                st.session_state["mo_clear_form_after_success"] = True
+                st.rerun()
+            else:
+                # Modo completo: actualizar MRPEasy y cerrar el MO desde esta pantalla (flujo original).
+                # ID del registro recién insertado (para marcar processed_at tras cerrar el MO)
+                inserted_id = _get_last_inserted_id_for_lot(lot)
 
-            # 2) Actualizar MRPEasy (cantidad + intento de poner estado Done por API — nuestro "cerrar MO" interno)
-            with st.spinner(f"Actualizando MO en MRPEasy con cantidad {qty}..."):
-                workflow = ProductionWorkflow()
-                success, result_data, message = workflow.process_production_completion(
-                    lot_code=lot,
-                    produced_quantity=qty,  # Exactamente el valor de "Cantidad del sticker"
-                    uom=uom_val,
-                    item_code=None,
-                )
+                # 2) Actualizar MRPEasy (cantidad + intento de poner estado Done por API — nuestro "cerrar MO" interno)
+                with st.spinner(f"Actualizando MO en MRPEasy con cantidad {qty}..."):
+                    workflow = ProductionWorkflow()
+                    success, result_data, message = workflow.process_production_completion(
+                        lot_code=lot,
+                        produced_quantity=qty,  # Exactamente el valor de "Cantidad del sticker"
+                        uom=uom_val,
+                        item_code=None,
+                    )
 
-            # ¿Nuestro intento por API puso ya el estado a Done?
-            status_set_done_via_api = bool(result_data and (result_data.get("mo_update") or {}).get("status_set_done"))
-            mo_update = (result_data or {}).get("mo_update") or {}
-            playwright_closed = bool(mo_update.get("playwright_closed"))
-            playwright_error = mo_update.get("playwright_error")
+                # ¿Nuestro intento por API puso ya el estado a Done?
+                status_set_done_via_api = bool(result_data and (result_data.get("mo_update") or {}).get("status_set_done"))
+                mo_update = (result_data or {}).get("mo_update") or {}
+                playwright_closed = bool(mo_update.get("playwright_closed"))
+                playwright_error = mo_update.get("playwright_error")
 
-            # 3) Cierre: API Done, o Playwright (navegador), o servicio externo (ERP Close MO)
-            server_url = secrets.get("mrpeasy-could-run-po-automation-service-url") or secrets.get("mrpeasy_cloud_run_po_automation_service_url") or ""
-            close_success = status_set_done_via_api or playwright_closed
-            close_message = "MO cerrado (estado Done)." if status_set_done_via_api else ("MO cerrado (Done) por navegador." if playwright_closed else None)
-            if status_set_done_via_api and inserted_id is not None:
-                _mark_order_processed(inserted_id)
-            elif not close_success and server_url and not _is_service_url_invalid(server_url):
-                with st.spinner("Cerrando MO en MRPeasy (estado Done)..."):
-                    close_success, close_message = _close_mo_via_service(server_url, lot, qty)
-                if close_success and inserted_id is not None:
+                # 3) Cierre: API Done, o Playwright (navegador), o servicio externo (ERP Close MO)
+                server_url = secrets.get("mrpeasy-could-run-po-automation-service-url") or secrets.get("mrpeasy_cloud_run_po_automation_service_url") or ""
+                close_success = status_set_done_via_api or playwright_closed
+                close_message = "MO cerrado (estado Done)." if status_set_done_via_api else ("MO cerrado (Done) por navegador." if playwright_closed else None)
+                if status_set_done_via_api and inserted_id is not None:
                     _mark_order_processed(inserted_id)
-            elif playwright_closed and inserted_id is not None:
-                _mark_order_processed(inserted_id)
+                elif not close_success and server_url and not _is_service_url_invalid(server_url):
+                    with st.spinner("Cerrando MO en MRPeasy (estado Done)..."):
+                        close_success, close_message = _close_mo_via_service(server_url, lot, qty)
+                    if close_success and inserted_id is not None:
+                        _mark_order_processed(inserted_id)
+                elif playwright_closed and inserted_id is not None:
+                    _mark_order_processed(inserted_id)
 
-            # Guardar mensajes de éxito, limpiar formulario y rerun para dejar listo el siguiente escaneo
-            st.session_state["mo_success_messages"] = {
-                "db_ok": True,
-                "workflow_success": success,
-                "workflow_message": message,
-                "result_data": result_data,
-                "lot": lot,
-                "uom_val": uom_val,
-                "close_mo_success": close_success,
-                "close_mo_message": close_message,
-                "playwright_error": playwright_error,
-            }
-            st.session_state["mo_clear_form_after_success"] = True
-            st.rerun()
+                # Guardar mensajes de éxito, limpiar formulario y rerun para dejar listo el siguiente escaneo
+                st.session_state["mo_success_messages"] = {
+                    "db_ok": True,
+                    "workflow_success": success,
+                    "workflow_message": message,
+                    "result_data": result_data,
+                    "lot": lot,
+                    "uom_val": uom_val,
+                    "close_mo_success": close_success,
+                    "close_mo_message": close_message,
+                    "playwright_error": playwright_error,
+                }
+                st.session_state["mo_clear_form_after_success"] = True
+                st.rerun()
 
 # Mostrar mensajes de éxito del procesamiento anterior (una vez) y dejar formulario limpio
 if "mo_success_messages" in st.session_state:
@@ -549,7 +611,8 @@ if "mo_success_messages" in st.session_state:
         msg += (sm.get("close_mo_message") or "") + "\n\n"
         msg += "**Opciones:** (1) Pon **mrpeasy_playwright_headless = false** en secrets.toml y vuelve a intentar. (2) Marca el MO como Done manualmente en MRPeasy."
         st.warning(msg)
-    if sm.get("workflow_success"):
+    workflow_success = sm.get("workflow_success")
+    if workflow_success is True:
         st.success(f"✅ {sm['workflow_message']}")
         result_data = sm.get("result_data")
         if result_data:
@@ -574,7 +637,7 @@ if "mo_success_messages" in st.session_state:
                     file_name=f"production_summary_{lot}.pdf",
                     mime="application/pdf",
                 )
-    else:
+    elif workflow_success is False:
         err = sm.get("workflow_message", "")
         st.warning(
             f"**No se pudo actualizar MRPEasy:** {err}"
@@ -584,6 +647,12 @@ if "mo_success_messages" in st.session_state:
             "**(1)** No se encontró un MO con ese lote (el lote debe estar en **Target lots** del MO en MRPEasy), o "
             "**(2)** la API rechazó la actualización. Puedes procesar esta fila desde **ERP Close MO** o revisar en MRPEasy que el lote **" + (sm.get("lot", "") or "") + "** esté vinculado a un MO."
         )
+    else:
+        info_msg = sm.get(
+            "workflow_message",
+            "Registro guardado. El MO se procesará automáticamente en segundo plano (Auto MO Processor / ERP Close MO).",
+        )
+        st.info(info_msg)
     del st.session_state["mo_success_messages"]
 
 st.divider()
