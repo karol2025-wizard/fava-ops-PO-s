@@ -2756,7 +2756,7 @@ def main():
                             width:100%; padding:0.5rem 1rem; font-size:1rem; cursor:pointer;
                             background:#FF4B4B; color:white; border:none; border-radius:0.5rem;
                             font-weight:500;">
-                            🖨️ Imprimir PDF (formato Fava)
+                            🖨️ Print PDF
                         </button>
                         <script>
                         (function() {{

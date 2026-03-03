@@ -222,9 +222,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Opciones de flujo
+# value=False: al pulsar Registrar se actualiza la cantidad en MRPEasy y se cierra el MO (Done) desde aquí (Playwright o servicio).
 fast_mode = st.checkbox(
     "Solo registrar LOT + cantidad (el MO se procesa en segundo plano con **Auto MO Processor / ERP Close MO**).",
-    value=True,
+    value=False,
     key="mo_fast_mode",
 )
 auto_register_enabled = st.checkbox(

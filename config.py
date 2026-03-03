@@ -41,6 +41,11 @@ def load_secrets():
         "starship_db_user": "starship_db_user",
         "starship_db_password": "starship_db_password",
         "starship_db_database": "starship_db_database",
+        "delivery_smtp_host": "delivery_smtp_host",
+        "delivery_smtp_port": "delivery_smtp_port",
+        "delivery_smtp_user": "delivery_smtp_user",
+        "delivery_smtp_password": "delivery_smtp_password",
+        "delivery_alert_to": "delivery_alert_to",
     }
     for env_key, secrets_key in env_map.items():
         val = os.getenv(env_key)
