@@ -348,6 +348,20 @@ class APIManager:
                 return None
         return customer_orders
 
+    def get_customer_order_details(self, order_id: int) -> Optional[Dict]:
+        """Obtiene el detalle de una CO por ID (incluye productos/líneas si la API los devuelve)."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/customer-orders/{order_id}",
+                auth=self.auth,
+                headers={'content-type': 'application/json'},
+            )
+            if response.status_code == 200:
+                return response.json()
+        except Exception:
+            pass
+        return None
+
     def fetch_purchase_orders(self):
         purchase_orders = []
         start = 0

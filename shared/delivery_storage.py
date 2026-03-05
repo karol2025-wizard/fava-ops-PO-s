@@ -57,6 +57,32 @@ def _new_uuid() -> str:
     return str(uuid.uuid4())
 
 
+def _delivery_date_for_compare(value: Any) -> str:
+    """Normaliza delivery_date a YYYY-MM-DD para comparación (acepta timestamp numérico o string)."""
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        try:
+            if 1e9 <= value <= 2e9:
+                return datetime.fromtimestamp(int(value)).strftime("%Y-%m-%d")
+            if value > 2e9:
+                return datetime.fromtimestamp(int(value) / 1000).strftime("%Y-%m-%d")
+        except (OSError, ValueError):
+            pass
+        return ""
+    s = str(value).strip()
+    if s.isdigit():
+        try:
+            ts = int(s)
+            if 1e9 <= ts <= 2e9:
+                return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+            if ts > 2e9:
+                return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+        except (OSError, ValueError):
+            pass
+    return s[:10] if len(s) >= 10 else s
+
+
 def requires_lot_by_group(product_group: str) -> bool:
     """True si el grupo requiere LOT (Dips, Sauces)."""
     if not product_group:
@@ -79,16 +105,17 @@ def list_customer_orders(
         return []
     out = []
     for r in rows:
-        if date_from and (r.get("delivery_date") or "") < date_from:
+        r_date = _delivery_date_for_compare(r.get("delivery_date"))
+        if date_from and r_date < date_from:
             continue
-        if date_to and (r.get("delivery_date") or "") > date_to:
+        if date_to and r_date > date_to:
             continue
         if customer and (customer.strip().lower() not in (r.get("customer_name") or "").lower()):
             continue
         if status and r.get("status") != status:
             continue
         out.append(r)
-    return sorted(out, key=lambda x: (x.get("delivery_date") or "", x.get("id") or ""))
+    return sorted(out, key=lambda x: (_delivery_date_for_compare(x.get("delivery_date")), x.get("id") or ""))
 
 
 def get_customer_order(co_id: str) -> Optional[Dict[str, Any]]:
@@ -159,6 +186,7 @@ def add_items_to_order(co_id: str, items: List[Dict[str, Any]]) -> Dict[str, Any
         if str(r.get("id", "")).strip() == str(co_id).strip():
             existing = r.get("items") or []
             for it in items:
+                origin_in = it.get("origin") or it.get("location") or it.get("ubicacion")
                 existing.append({
                     "id": _new_uuid(),
                     "product_code": (it.get("product_code") or "").strip(),
@@ -166,7 +194,7 @@ def add_items_to_order(co_id: str, items: List[Dict[str, Any]]) -> Dict[str, Any
                     "product_group": (it.get("product_group") or "").strip(),
                     "requested_qty": float(it.get("requested_qty") or 0),
                     "picked_qty": None,
-                    "origin": None,
+                    "origin": (str(origin_in).strip() or None) if origin_in else None,
                     "lot_number": None,
                     "requires_lot": requires_lot_by_group(it.get("product_group") or ""),
                     "difference_qty": None,
@@ -177,6 +205,22 @@ def add_items_to_order(co_id: str, items: List[Dict[str, Any]]) -> Dict[str, Any
             _write_json(path, rows)
             return r
     raise ValueError(f"CO {co_id} no encontrada")
+
+
+def delete_customer_orders_except(keep_ids: List[str]) -> int:
+    """Elimina todas las CO excepto las cuyo id está en keep_ids. Devuelve cuántas se eliminaron."""
+    path = _delivery_dir() / "customer_orders.json"
+    rows = _read_json(path, [])
+    if not isinstance(rows, list):
+        return 0
+    keep_set = {str(x).strip() for x in keep_ids if x}
+    if not keep_set:
+        return 0
+    new_rows = [r for r in rows if str(r.get("id", "")).strip() in keep_set]
+    deleted = len(rows) - len(new_rows)
+    if deleted > 0:
+        _write_json(path, new_rows)
+    return deleted
 
 
 def set_order_in_preparation(co_id: str) -> bool:
@@ -213,7 +257,8 @@ def update_order_picking(co_id: str, items: List[Dict[str, Any]], closed_by: str
             continue
         it = item_by_id[iid]
         it["picked_qty"] = upd.get("picked_qty")
-        it["origin"] = upd.get("origin") if upd.get("origin") in ORIGINS else None
+        # Permitir ubicaciones exactas (p. ej. "Fridge-4", "Freezer-2", "Dry")
+        it["origin"] = (upd.get("origin") or None)
         it["lot_number"] = (upd.get("lot_number") or "").strip() or None
         it["difference_reason"] = upd.get("difference_reason") if upd.get("difference_reason") in DIFFERENCE_REASONS else None
         req = float(it.get("requested_qty") or 0)
@@ -252,7 +297,8 @@ def can_close_order(co: Dict[str, Any]) -> Tuple[bool, List[str]]:
             errors.append(f"LOT obligatorio (Dips/Sauces): {it.get('product_name') or it.get('product_code')}")
         req = float(it.get("requested_qty") or 0)
         picked = float(it.get("picked_qty") or 0)
-        if req != picked and it.get("difference_reason") not in DIFFERENCE_REASONS:
+        # Motivo solo obligatorio si se tomó MENOS de lo solicitado
+        if picked + 0.001 < req and it.get("difference_reason") not in DIFFERENCE_REASONS:
             errors.append(f"Motivo obligatorio (diferencia): {it.get('product_name') or it.get('product_code')}")
     return (len(errors) == 0, errors)
 
